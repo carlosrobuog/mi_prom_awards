@@ -225,7 +225,7 @@
           <a href="#/" data-act="scroll" data-to="#evento">El evento</a>
           <a href="#/" data-act="scroll" data-to="#como">Cómo participar</a>
         </nav>
-        ${S.user ? `<span class="nav-btns">${S.isAdmin ? '<a class="btn btn-sm btn-ghost" href="#/admin">Administración</a>' : ''}<a class="btn btn-sm" href="#/dashboard">Mi espacio</a>${LOGOUT.replace('btn-out', 'btn-ghost')}</span>` : '<a class="btn btn-sm" href="#/acceso">Entrar</a>'}
+        ${S.isAdmin ? `<span class="nav-btns"><a class="btn btn-sm" href="#/admin">Administración</a>${LOGOUT.replace('btn-out', 'btn-ghost')}</span>` : S.user ? `<span class="nav-btns"><a class="btn btn-sm" href="#/dashboard">Mi espacio</a>${LOGOUT.replace('btn-out', 'btn-ghost')}</span>` : '<a class="btn btn-sm" href="#/acceso">Entrar</a>'}
       </div>`,
       html: `
       <section class="hero" id="inicio">
@@ -390,7 +390,7 @@
             if (profile) await DB.createProfile({ name, alias, photo: reg.photo, icon: reg.icon });
             await refresh();
             const dest = afterLogin; afterLogin = null;
-            if (dest === 'admin' && S.isAdmin) { toast('Bienvenido a la administración.'); go('admin'); return; }
+            if (S.isAdmin) { toast('Bienvenido a la administración.'); go('admin'); return; }
             if (dest === 'admin') toast('Esa cuenta no es de administrador.', 'warn');
             if (!S.user) { accessMode = 'perfil'; render(); return; }
             if (profile) resetReg();
@@ -1094,7 +1094,9 @@
     if (name === 'exito') { history.replaceState(null, '', '#/resumen'); name = 'resumen'; }
     const needsUser = ['dashboard', 'categorias', 'nominar', 'resumen'];
     const mine = S.user && me();
-    const homeOf = () => (mine && mine.status === 'approved' ? 'dashboard' : 'pendiente');
+    const homeOf = () => (S.isAdmin ? 'admin' : mine && mine.status === 'approved' ? 'dashboard' : 'pendiente');
+    /* El administrador no vota: sus pantallas son las de administración */
+    if (S.isAdmin && (needsUser.includes(name) || name === 'pendiente' || name === 'acceso')) { history.replaceState(null, '', '#/admin'); name = 'admin'; }
     if (name === 'admin' && !S.authed) { accessMode = 'entrar'; afterLogin = 'admin'; history.replaceState(null, '', '#/acceso'); name = 'acceso'; }
     if (needsUser.includes(name) && !mine) { history.replaceState(null, '', '#/acceso'); name = 'acceso'; }
     else if (needsUser.includes(name) && mine.status !== 'approved') { history.replaceState(null, '', '#/pendiente'); name = 'pendiente'; }
