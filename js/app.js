@@ -15,6 +15,7 @@
   const DB = PA.db;
   const fresh = () => ({
     authed: false,                  // hay sesión de Supabase
+    email: '',                      // correo de la cuenta
     user: null,                     // id de MI participante (null = sesión sin perfil)
     isAdmin: false,
     participants: [],
@@ -28,7 +29,7 @@
   let S = fresh();
   const applyBundle = (b) => {
     S = fresh();
-    S.authed = b.authed; S.isAdmin = b.isAdmin;
+    S.authed = b.authed; S.isAdmin = b.isAdmin; S.email = b.email;
     if (b.settings) S.settings = b.settings;
     S.categories = b.categories; S.participants = b.participants;
     S.user = b.me ? b.me.id : null;
@@ -38,6 +39,8 @@
   const refresh = async () => applyBundle(await DB.load());
   const errMsg = (e) => {
     const m = String((e && e.message) || e || '');
+    if (m === 'WRONG_CURRENT') return 'La contraseña actual no es correcta.';
+    if (/different from the old|same as the old|same password/i.test(m)) return 'La nueva contraseña debe ser distinta a la actual.';
     if (/Invalid login/i.test(m)) return 'Correo o contraseña incorrectos.';
     if (/already registered|already been registered/i.test(m)) return 'Ese correo ya tiene cuenta. Usa «Ya tengo cuenta».';
     if (/password/i.test(m) && /(least|short|weak|characters)/i.test(m)) return 'La contraseña debe tener al menos 6 caracteres.';
@@ -190,8 +193,7 @@
         ${S.isAdmin ? '<a href="#/admin">Administración</a>' : ''}
       </nav>
       <div class="bar-user">
-        <span class="bar-name">${esc(first(u.name))}</span>
-        ${avatar(u, 'av-sm')}
+        <button class="bar-me" data-act="account" aria-label="Mi cuenta: cambiar contraseña" title="Mi cuenta"><span class="bar-name">${esc(first(u.name))}</span>${avatar(u, 'av-sm')}</button>
         ${LOGOUT}
       </div>
     </div>`;
@@ -650,6 +652,38 @@
     };
   };
 
+  /* ---------- Mi cuenta: cambiar contraseña ---------- */
+  const accountModal = () => {
+    const u = me();
+    openModal(`
+      <header class="modal-head"><h2 class="h3" id="mt">Mi cuenta</h2><button class="icon-btn" data-act="modal-close" aria-label="Cerrar">${ui('close')}</button></header>
+      <form id="pw-form" novalidate>
+        <div class="modal-body">
+          <div class="acct">
+            ${u ? avatar(u, 'av-md') : ''}
+            <span class="acct-t"><b>${esc(u ? u.name : S.email)}</b><em>${esc(S.email)}</em></span>
+          </div>
+          <h3 class="h3 acct-h">Cambiar contraseña</h3>
+          <label class="field"><span class="label">Contraseña actual</span><input id="pw-cur" type="password" autocomplete="current-password" required></label>
+          <label class="field"><span class="label">Contraseña nueva</span><input id="pw-new" type="password" autocomplete="new-password" minlength="6" placeholder="Mínimo 6 caracteres" required></label>
+          <label class="field"><span class="label">Repite la contraseña nueva</span><input id="pw-rep" type="password" autocomplete="new-password" required></label>
+        </div>
+        <div class="modal-actions"><button type="button" class="btn btn-ghost" data-act="modal-close">Cancelar</button><button type="submit" class="btn" id="pw-go">Guardar contraseña</button></div>
+      </form>`, 'modal-lg');
+    $('#pw-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const cur = $('#pw-cur').value, nw = $('#pw-new').value, rep = $('#pw-rep').value;
+      if (!cur) { toast('Escribe tu contraseña actual.', 'warn'); $('#pw-cur').focus(); return; }
+      if (nw.length < 6) { toast('La contraseña nueva debe tener al menos 6 caracteres.', 'warn'); $('#pw-new').focus(); return; }
+      if (nw !== rep) { toast('Las contraseñas nuevas no coinciden.', 'warn'); $('#pw-rep').focus(); return; }
+      if (nw === cur) { toast('La nueva contraseña debe ser distinta a la actual.', 'warn'); $('#pw-new').focus(); return; }
+      const btn = $('#pw-go'), label = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '<i class="spin"></i>Guardando…';
+      try { await DB.changePassword(S.email, cur, nw); closeModal(); toast('Contraseña actualizada.'); }
+      catch (err) { console.error(err); toast(errMsg(err), 'warn'); btn.disabled = false; btn.innerHTML = label; }
+    });
+  };
+
   /* ---------- SOLICITUD PENDIENTE / RECHAZADA ---------- */
   views.pendiente = () => {
     const u = me(), rej = u.status === 'rejected';
@@ -663,7 +697,7 @@
         <h1 class="h1">${rej ? 'No pudimos aprobar tu acceso.' : `¡Gracias, ${esc(first(u.name))}!`}</h1>
         <p class="muted">${rej ? 'Si crees que es un error, habla con el organizador.' : 'El organizador revisará tu solicitud. Cuando la apruebe podrás votar por tus compañeros. Esta pantalla se actualiza sola.'}</p>
         ${orn()}
-        <div class="actions center">${rej ? '' : '<button class="btn" data-act="pend-check">Comprobar ahora</button>'}${LOGOUT.replace('btn-out', 'btn-ghost')}</div>
+        <div class="actions center">${rej ? '' : '<button class="btn" data-act="pend-check">Comprobar ahora</button>'}<button class="btn btn-ghost" data-act="account">${ui('key')}Cambiar contraseña</button>${LOGOUT.replace('btn-out', 'btn-ghost')}</div>
       </div></div></section>`,
       mount: () => {
         if (rej) return;
@@ -747,7 +781,7 @@
       </aside>
       <div class="admin-main">
         ${adminAlerts()}
-        <header class="admin-head rise"><div><p class="eyebrow">${sub}</p><h1 class="h1">${title}</h1></div><div class="actions">${actions}${bellBtn()}${LOGOUT.replace('btn-out', 'btn-ghost')}</div></header>
+        <header class="admin-head rise"><div><p class="eyebrow">${sub}</p><h1 class="h1">${title}</h1></div><div class="actions">${actions}<button class="icon-btn" data-act="account" aria-label="Mi cuenta: cambiar contraseña" title="Cambiar contraseña">${ui('key')}</button>${bellBtn()}${LOGOUT.replace('btn-out', 'btn-ghost')}</div></header>
         ${inner}
       </div>
     </section>`;
@@ -1152,6 +1186,7 @@
     'acc-mode': (t) => { accessMode = t.dataset.k; render(); },
     'acc-admin': () => { accessMode = 'entrar'; afterLogin = 'admin'; },
     'acc-out': async (t, e) => { e.preventDefault(); await DB.signOut(); resetReg(); await refresh(); accessMode = 'registro'; render(); },
+    account: () => accountModal(),
     'pend-check': async () => {
       try { await refresh(); } catch (e) { toast(errMsg(e), 'warn'); return; }
       if (me() && me().status === 'approved') { toast('¡Tu solicitud fue aprobada!'); go('dashboard'); } else toast('Todavía está pendiente de aprobación.');

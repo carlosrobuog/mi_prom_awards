@@ -42,6 +42,7 @@ PA.UI = {
   down: '<path d="m6 9 6 6 6-6"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   out: '<path d="M10 4H5v16h5M15 8l4 4-4 4M19 12H9"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M14 9l2 2"/>',
   bell: '<path d="M6 10a6 6 0 0 1 12 0c0 5.5 2 6.5 2 7.5H4c0-1 2-2 2-7.5zM10 20.5a2 2 0 0 0 4 0"/>',
   grid: '<rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/>',
   users: '<circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 20c.6-3.8 3.2-6 6.5-6s5.9 2.2 6.5 6M16 5.2a3.3 3.3 0 0 1 0 6.1M18.5 14.4c1.7.8 2.8 2.6 3 5.6"/>',

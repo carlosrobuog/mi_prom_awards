@@ -22,7 +22,7 @@
     /* ---- Lectura: todo lo que la pantalla necesita, según quién eres ---- */
     async load() {
       const { data: { session } } = await sb.auth.getSession();
-      const out = { authed: !!session, settings: null, categories: [], participants: [], me: null, isAdmin: false, selections: {}, runoffSel: {}, allVotes: [], allRunoff: [] };
+      const out = { authed: !!session, email: session ? session.user.email : '', settings: null, categories: [], participants: [], me: null, isAdmin: false, selections: {}, runoffSel: {}, allVotes: [], allRunoff: [] };
       const uid = session && session.user.id;
       /* Todas las consultas en paralelo (una sola espera de red) */
       const [sRow, cats, parts, admin] = await Promise.all([
@@ -63,6 +63,12 @@
     },
     async signIn(email, password) { ok(await sb.auth.signInWithPassword({ email, password })); },
     async signOut() { await sb.auth.signOut(); },
+    /* Cambiar la contraseña propia: primero se comprueba la actual y luego se guarda la nueva */
+    async changePassword(email, current, next) {
+      const { error: e1 } = await sb.auth.signInWithPassword({ email, password: current });
+      if (e1) throw new Error('WRONG_CURRENT');
+      ok(await sb.auth.updateUser({ password: next }));
+    },
 
     /* Perfil propio: foto opcional (si no hay, queda el icono aleatorio) */
     async createProfile({ name, alias, photo, icon }) {
