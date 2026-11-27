@@ -639,3 +639,49 @@ html{overscroll-behavior-x:none}
   .bar-l .brand{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center}
   .link{display:inline-flex;align-items:center;min-height:44px}
 }
+
+/* ---- Resultados: alertas, ganadores y diploma ---- */
+.alert{display:flex;align-items:center;gap:12px;padding:14px 16px;margin-bottom:14px;border:1px solid var(--gold-lo);border-radius:var(--r);background:rgba(212,175,55,.08);color:var(--ink);font-size:14px;line-height:1.4}
+.alert.warn{border-color:var(--red);background:rgba(139,30,45,.24)}
+.alert>svg,.callout>svg,.callout>span:first-child>svg{flex:none;width:20px;height:20px;color:var(--gold-hi)}
+.alert>span{flex:1;min-width:0}
+.alert>i{display:inline-flex;align-items:center;gap:6px;font:600 10px var(--f-ui);letter-spacing:.18em;text-transform:uppercase;font-style:normal;color:var(--gold-hi);white-space:nowrap}
+.alert>i svg{width:14px;height:14px}
+.callout{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;margin:14px 0;border:1px solid var(--line-soft);border-radius:var(--r);background:var(--bg3);font-size:14px;line-height:1.45}
+.callout.warn{border-color:var(--red);background:rgba(139,30,45,.2)}
+.callout.ok{border-color:var(--gold);background:rgba(212,175,55,.09)}
+.callout .link{color:var(--gold-hi);text-decoration:underline;text-underline-offset:3px}
+.rpanel .actions{margin:4px 0 14px}
+.winners{display:grid;gap:10px;margin:6px 0 20px}
+.winner{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:12px;border:1px solid var(--gold-lo);border-radius:var(--r);background:var(--bg3)}
+.winner>div{flex:1;display:grid;gap:3px;min-width:140px}
+.winner b{font:600 18px/1.2 var(--f-serif)}
+.winner em{font-style:italic;color:var(--gold-hi);font-size:13px}
+.winner .av-xl{width:72px}
+
+.diploma{container-type:inline-size;width:100%;aspect-ratio:1.4142;position:relative;color:var(--ink);background:radial-gradient(120% 90% at 50% 0%,#1c1608 0%,#0c0a05 55%,#080808 100%);-webkit-print-color-adjust:exact;print-color-adjust:exact;overflow:hidden}
+.dip-frame{position:absolute;inset:2.6cqw;border:.28cqw solid var(--gold);display:grid;grid-template-rows:auto auto 1fr auto;justify-items:center;align-items:center;text-align:center;padding:3cqw 4.5cqw 2.4cqw}
+.dip-frame::before{content:"";position:absolute;inset:.9cqw;border:.1cqw solid var(--gold-lo);pointer-events:none}
+.dip-top{font:600 1.5cqw var(--f-ui);letter-spacing:.5em;color:var(--gold-hi);margin:0}
+.dip-title{font:700 5cqw/1.05 var(--f-title);letter-spacing:.06em;text-transform:uppercase;color:var(--gold-hi);margin:1.2cqw 0 0}
+.dip-body{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:4cqw;width:100%;padding:1.2cqw 2cqw}
+.dip-art{display:flex;align-items:flex-end;gap:1.6cqw}
+.dip-photo{width:19cqw;aspect-ratio:3/4;border:.3cqw solid var(--gold);overflow:hidden;background:var(--bg3)}
+.dip-photo img,.dip-photo .ph-ico{display:grid;width:100%;height:100%;object-fit:cover;object-position:50% 25%}
+.dip-statue{height:25cqw;width:11cqw}
+.dip-statue svg{display:block;height:100%;width:100%}
+.dip-text{text-align:left;display:grid;gap:.6cqw;min-width:0}
+.dip-small{font:italic 400 1.7cqw var(--f-serif);color:var(--mute);margin:0}
+.dip-name{font:600 4.3cqw/1.1 var(--f-serif);margin:0;color:var(--ink);overflow-wrap:anywhere}
+.dip-alias{font:italic 400 2cqw var(--f-serif);color:var(--gold-hi);margin:0}
+.dip-cat{font:700 3.2cqw/1.15 var(--f-title);letter-spacing:.04em;text-transform:uppercase;color:var(--gold-hi);margin:.4cqw 0}
+.dip-year{font:600 1.5cqw var(--f-ui);letter-spacing:.3em;text-transform:uppercase;color:var(--mute);margin:.6cqw 0 0}
+.dip-foot{font:600 1.2cqw var(--f-ui);letter-spacing:.3em;text-transform:uppercase;color:var(--mute);margin:0}
+#print-root{display:none}
+@media print{
+  @page{size:A4 landscape;margin:0}
+  body.printing>*:not(#print-root){display:none!important}
+  body.printing #print-root{display:block;width:297mm;height:210mm}
+  body.printing{background:#080808}
+}
+@media (max-width:759px){.alert{flex-wrap:wrap}.alert>i{width:100%;justify-content:flex-end}}

@@ -6,7 +6,7 @@
   const ok = ({ data, error }) => { if (error) throw error; return data; };
 
   const mapP = (r) => ({ id: r.id, name: r.name, alias: r.alias || '', photo: r.photo_url || null, icon: r.avatar_icon || null, userId: r.user_id, active: r.active, status: r.status, createdAt: r.created_at });
-  const mapC = (r) => ({ id: r.id, name: r.name, desc: r.description, icon: r.icon, active: r.active, position: r.position });
+  const mapC = (r) => ({ id: r.id, name: r.name, desc: r.description, icon: r.icon, active: r.active, position: r.position, round: r.round, runoffOpen: r.runoff_open, runoffCandidates: r.runoff_candidates || [], sharedWin: r.shared_win });
 
   const blobOf = async (dataUrl) => (await fetch(dataUrl)).blob();
   const upload = async (dataUrl, folder) => {
@@ -22,15 +22,14 @@
     /* ---- Lectura: todo lo que la pantalla necesita, según quién eres ---- */
     async load() {
       const { data: { session } } = await sb.auth.getSession();
-      const out = { authed: !!session, settings: null, categories: [], participants: [], me: null, isAdmin: false, selections: {}, confirmed: {}, results: {}, nomDates: [] };
+      const out = { authed: !!session, settings: null, categories: [], participants: [], me: null, isAdmin: false, selections: {}, runoffSel: {}, allVotes: [], allRunoff: [] };
       const uid = session && session.user.id;
       /* Todas las consultas en paralelo (una sola espera de red) */
-      const [sRow, cats, parts, admin, subs] = await Promise.all([
+      const [sRow, cats, parts, admin] = await Promise.all([
         sb.from('settings').select('name,event_date,noms_open').maybeSingle(),
-        sb.from('categories').select('id,name,description,icon,position,active').order('position').order('name'),
+        sb.from('categories').select('id,name,description,icon,position,active,round,runoff_open,runoff_candidates,shared_win').order('position').order('name'),
         session ? sb.from('participants').select('id,name,alias,photo_url,avatar_icon,user_id,active,status,created_at').order('name') : null,
-        session ? sb.from('admins').select('user_id').eq('user_id', uid).maybeSingle() : null,
-        session ? sb.from('submissions').select('voter_id') : null
+        session ? sb.from('admins').select('user_id').eq('user_id', uid).maybeSingle() : null
       ]);
       const row = ok(sRow);
       if (row) out.settings = { name: row.name, date: row.event_date, open: row.noms_open };
@@ -40,15 +39,19 @@
       out.participants = ok(parts).map(mapP);
       out.me = out.participants.find((p) => p.userId === uid) || null;
       out.isAdmin = !!ok(admin);
-      ok(subs).forEach((s) => { out.confirmed[s.voter_id] = true; });
-      const [noms, results, dates] = await Promise.all([
+      const [noms, runs, allN, allR] = await Promise.all([
         out.me ? sb.from('nominations').select('category_id,nominee_id').eq('voter_id', out.me.id) : null,
-        out.isAdmin ? sb.from('nomination_results').select('category_id,nominee_id,votes') : null,
-        out.isAdmin ? sb.from('nominations').select('created_at').order('created_at') : null
+        out.me ? sb.from('runoff_votes').select('category_id,round,nominee_id').eq('voter_id', out.me.id) : null,
+        out.isAdmin ? sb.from('nominations').select('category_id,voter_id,nominee_id,created_at').order('created_at').limit(5000) : null,
+        out.isAdmin ? sb.from('runoff_votes').select('category_id,round,voter_id,nominee_id').limit(5000) : null
       ]);
       if (noms) ok(noms).forEach((n) => { out.selections[n.category_id] = n.nominee_id; });
-      if (results) ok(results).forEach((r) => { (out.results[r.category_id] = out.results[r.category_id] || {})[r.nominee_id] = r.votes; });
-      if (dates) out.nomDates = ok(dates).map((r) => r.created_at);
+      if (runs) ok(runs).forEach((r) => {            // solo cuenta el voto de la ronda vigente de cada categoría
+        const c = out.categories.find((x) => x.id === r.category_id);
+        if (c && c.round === r.round) out.runoffSel[r.category_id] = r.nominee_id;
+      });
+      if (allN) out.allVotes = ok(allN);
+      if (allR) out.allRunoff = ok(allR);
       return out;
     },
 
@@ -74,7 +77,10 @@
       if (!nomineeId) { ok(await sb.from('nominations').delete().eq('category_id', categoryId).eq('voter_id', voterId)); return; }
       ok(await sb.from('nominations').upsert({ category_id: categoryId, voter_id: voterId, nominee_id: nomineeId }, { onConflict: 'category_id,voter_id' }));
     },
-    async submit(voterId) { ok(await sb.from('submissions').insert({ voter_id: voterId })); },
+    async setRunoffVote(categoryId, round, voterId, nomineeId) {
+      if (!nomineeId) { ok(await sb.from('runoff_votes').delete().eq('category_id', categoryId).eq('round', round).eq('voter_id', voterId)); return; }
+      ok(await sb.from('runoff_votes').upsert({ category_id: categoryId, round, voter_id: voterId, nominee_id: nomineeId }, { onConflict: 'category_id,round,voter_id' }));
+    },
 
     /* ---- Administración ---- */
     async savePerson({ id, name, alias, photo, icon }) {
@@ -96,6 +102,8 @@
       if (id) ok(await sb.from('categories').update(row).eq('id', id));
       else ok(await sb.from('categories').insert({ ...row, position }));
     },
+    /* Estado de desempate de una categoría: { shared_win } | { round, runoff_open, runoff_candidates, shared_win } | { runoff_open } */
+    async setCategoryState(id, patch) { ok(await sb.from('categories').update(patch).eq('id', id)); },
     async deleteCategory(id) { ok(await sb.from('categories').delete().eq('id', id)); },
     async setPositions(list) {                  // [{id, position}]
       for (const { id, position } of list) ok(await sb.from('categories').update({ position }).eq('id', id));

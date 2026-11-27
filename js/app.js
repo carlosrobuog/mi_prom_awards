@@ -20,10 +20,10 @@
     participants: [],
     categories: [],
     settings: { name: 'PROM AWARDS 2026', date: '2026-12-20T01:00:00Z', open: true },
-    selections: {},                 // { userId: { catId: participantId } }
-    confirmed: {},                  // { participantId: true }
-    results: {},                    // admin: { catId: { participantId: votos } }
-    nomDates: []                    // admin: fechas de cada nominación
+    selections: {},                 // { userId: { catId: participantId } }  (ronda 1)
+    runoffSel: {},                  // { catId: participantId }              (desempate vigente)
+    allVotes: [],                   // admin: todos los votos de la ronda 1
+    allRunoff: []                   // admin: todos los votos de desempates
   });
   let S = fresh();
   const applyBundle = (b) => {
@@ -33,7 +33,7 @@
     S.categories = b.categories; S.participants = b.participants;
     S.user = b.me ? b.me.id : null;
     if (b.me) S.selections[b.me.id] = b.selections;
-    S.confirmed = b.confirmed; S.results = b.results; S.nomDates = b.nomDates;
+    S.runoffSel = b.runoffSel; S.allVotes = b.allVotes; S.allRunoff = b.allRunoff;
   };
   const refresh = async () => applyBundle(await DB.load());
   const errMsg = (e) => {
@@ -52,22 +52,43 @@
   const activeCats = () => S.categories.filter((c) => c.active);
   const me = () => P(S.user);
   const mySel = () => (S.selections[S.user] = S.selections[S.user] || {});
-  const hasSel = (c) => !!(mySel()[c.id] && P(mySel()[c.id]));
+  const hasSel = (c) => !!(mySel()[c.id] && P(mySel()[c.id]));          // voto de la ronda 1
   const doneCount = () => activeCats().filter(hasSel).length;
-  const isConfirmed = () => !!S.confirmed[S.user];
-  const hasDone = (p) => !!S.confirmed[p.id];
   const roster = () => S.participants.filter((p) => p.active && p.status === 'approved');
   const eventDate = () => new Date(S.settings.date);
   const toLocalInput = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 
-  /* Votos reales (solo el admin los recibe) */
+  /* ¿Se puede votar en esta categoría ahora? Ronda 1: votación abierta. Desempate: solo si el admin lo abrió */
+  const votable = (c) => (c.round > 1 ? c.runoffOpen : S.settings.open);
+  const selOf = (c) => (c.round > 1 ? S.runoffSel[c.id] : mySel()[c.id]);
+
+  /* Votos reales de la ronda vigente de cada categoría (solo el admin recibe todos) */
   const votes = (catId) => {
-    const out = {}, r = S.results[catId] || {};
-    S.participants.forEach((p) => { out[p.id] = r[p.id] || 0; });
+    const c = S.categories.find((x) => x.id === catId), out = {};
+    roster().forEach((p) => { out[p.id] = 0; });
+    const rows = !c ? [] : c.round > 1 ? S.allRunoff.filter((r) => r.category_id === catId && r.round === c.round) : S.allVotes.filter((r) => r.category_id === catId);
+    rows.forEach((r) => { if (r.nominee_id in out) out[r.nominee_id]++; });
     return out;
   };
   const catTotal = (catId) => Object.values(votes(catId)).reduce((a, b) => a + b, 0);
-  const totalNoms = () => S.categories.reduce((a, c) => a + catTotal(c.id), 0);
+  const totalNoms = () => S.allVotes.length;
+  /* Resultado de una categoría: none | winner | shared | tie | runoff */
+  const outcome = (c) => {
+    const v = votes(c.id), max = Math.max(0, ...Object.values(v));
+    const leaders = Object.keys(v).filter((id) => v[id] === max && max > 0);
+    if (c.runoffOpen) return { state: 'runoff', leaders, max, v };
+    if (!max) return { state: 'none', leaders: [], winners: [], max: 0, v };
+    if (leaders.length === 1) return { state: 'winner', leaders, winners: leaders, max, v };
+    if (c.sharedWin) return { state: 'shared', leaders, winners: leaders, max, v };
+    return { state: 'tie', leaders, winners: [], max, v };
+  };
+  /* Cuántas categorías activas votó cada participante (admin) */
+  const votedCount = (pid) => {
+    const ok = new Set(activeCats().map((c) => c.id)), seen = new Set();
+    S.allVotes.forEach((v) => { if (v.voter_id === pid && ok.has(v.category_id)) seen.add(v.category_id); });
+    return seen.size;
+  };
+  const hasDone = (p) => { const n = activeCats().length; return n > 0 && votedCount(p.id) >= n; };
 
   /* =====================================================================
      UTILIDADES DE INTERFAZ: toasts, modales, partículas
@@ -163,7 +184,7 @@
       <nav class="bar-nav" aria-label="Principal">
         <a href="#/dashboard" class="${active === 'dash' ? 'on' : ''}">Mi espacio</a>
         <a href="#/categorias" class="${active === 'cats' ? 'on' : ''}">Categorías</a>
-        <a href="#/resumen" class="${active === 'sum' ? 'on' : ''}">Mis nominaciones</a>
+        <a href="#/resumen" class="${active === 'sum' ? 'on' : ''}">Mis votos</a>
         ${S.isAdmin ? '<a href="#/admin">Administración</a>' : ''}
       </nav>
       <div class="bar-user">
@@ -213,7 +234,7 @@
         <div class="wrap hero-copy">
           <p class="eyebrow rise" style="--d:.5s">Edición ${d.getFullYear()} · Reencuentro de promoción</p>
           <h1 class="display rise" style="--d:.65s"><span class="gold-text">PROM AWARDS</span><span class="year">${orn()}<b>${d.getFullYear()}</b>${orn()}</span></h1>
-          <p class="tagline rise" style="--d:.85s">Una promoción. Muchas historias. Grandes nominados.</p>
+          <p class="tagline rise" style="--d:.85s">Una promoción. Muchas historias. Grandes ganadores.</p>
           <p class="lede rise" style="--d:1s">Llegó el momento de reconocer a los personajes que hicieron inolvidable nuestra promoción.</p>
           <div class="actions rise" style="--d:1.15s">
             <a class="btn btn-lg" href="#/acceso">Entrar a los premios</a>
@@ -233,7 +254,7 @@
         </div>
         <dl class="facts">
           <div><dt>Fecha del reencuentro</dt><dd>${esc(dateTxt)}<small>${timeTxt}</small></dd></div>
-          <div><dt>Nominaciones</dt><dd class="${open ? 'is-open' : 'is-closed'}"><i class="dot"></i>${open ? 'Abiertas' : 'Cerradas'}</dd></div>
+          <div><dt>Votaciones</dt><dd class="${open ? 'is-open' : 'is-closed'}"><i class="dot"></i>${open ? 'Abiertas' : 'Cerradas'}</dd></div>
           <div><dt>Edición</dt><dd>${d.getFullYear()}</dd></div>
           <div><dt>Categorías</dt><dd>${cats.length}</dd></div>
         </dl>
@@ -244,15 +265,15 @@
         <ol class="cat-index">
           ${cats.map((c, i) => `<li><a href="#/acceso" class="cat-line"><span class="n">${pad(i + 1)}</span>${icon(c.icon, 'ci')}<span class="t">${esc(c.name)}</span>${ui('next', 'go')}</a></li>`).join('')}
         </ol>
-        <div class="center"><a class="btn" href="#/acceso">Nominar a mis compañeros</a></div>
+        <div class="center"><a class="btn" href="#/acceso">Votar por mis compañeros</a></div>
       </div></section>
 
       <section class="sec sec-alt" id="como"><div class="wrap">
         <header class="sec-head"><p class="eyebrow">Cómo participar</p><h2 class="h2">Tres pasos hacia la alfombra roja</h2>${orn()}</header>
         <ol class="steps">
           <li><span class="step-n">I</span><h3>Regístrate</h3><p>Crea tu perfil con tu nombre, tu alias y una fotografía. Sin trámites.</p></li>
-          <li><span class="step-n">II</span><h3>Nomina</h3><p>Elige a un compañero por categoría, tocando su fotografía.</p></li>
-          <li><span class="step-n">III</span><h3>Confirma</h3><p>Revisa tus elecciones y envíalas. Después, a esperar a los nominados oficiales.</p></li>
+          <li><span class="step-n">II</span><h3>Vota</h3><p>Elige a un compañero por categoría, tocando su fotografía. Tu voto se guarda al instante.</p></li>
+          <li><span class="step-n">III</span><h3>Conoce a los ganadores</h3><p>Cuando el organizador cierre la votación, gana quien tenga más votos en cada categoría.</p></li>
         </ol>
       </div></section>
 
@@ -393,15 +414,21 @@
   views.dashboard = () => {
     const u = me(), cats = activeCats(), done = doneCount(), total = cats.length;
     const pct = total ? Math.round((done / total) * 100) : 0;
-    const conf = isConfirmed();
     const open = S.settings.open;
+    const runoffs = cats.filter((c) => c.runoffOpen);
     const next = cats.findIndex((c) => !hasSel(c));
+    const complete = total > 0 && done === total;
     let cta;
-    if (conf) cta = `<a class="btn" href="#/resumen">Ver mis nominaciones</a>`;
-    else if (!open) cta = '';
-    else if (done === 0) cta = `<a class="btn" href="#/nominar/1">Comenzar nominaciones</a><a class="btn btn-ghost" href="#/categorias">Ver categorías</a>`;
-    else cta = `<a class="btn" href="#/nominar/${(next < 0 ? 0 : next) + 1}">Continuar nominaciones</a><a class="btn btn-ghost" href="#/resumen">Revisar resumen</a>`;
-    const state = conf ? 'Participación completada' : 'Participación pendiente';
+    if (open) cta = done === 0
+      ? `<a class="btn" href="#/nominar/1">Empezar a votar</a><a class="btn btn-ghost" href="#/categorias">Ver categorías</a>`
+      : `<a class="btn" href="#/nominar/${(next < 0 ? 0 : next) + 1}">${complete ? 'Revisar mis votos' : 'Seguir votando'}</a><a class="btn btn-ghost" href="#/resumen">Ver mis votos</a>`;
+    else if (runoffs.length) cta = `<a class="btn" href="#/nominar/${cats.indexOf(runoffs[0]) + 1}">Votar en el desempate</a><a class="btn btn-ghost" href="#/resumen">Ver mis votos</a>`;
+    else cta = `<a class="btn btn-ghost" href="#/resumen">Ver mis votos</a>`;
+    const head = open ? 'Las votaciones están abiertas.' : runoffs.length ? 'Hay un desempate abierto.' : 'Las votaciones están cerradas.';
+    const text = open ? 'Elige a un compañero por categoría. Tu voto se guarda al tocarlo y puedes cambiarlo hasta que el organizador cierre la votación.'
+      : runoffs.length ? `Hubo empate en ${runoffs.map((c) => '«' + esc(c.name) + '»').join(', ')}. Vota solo entre los empatados.`
+      : 'Gracias por participar. El organizador anunciará a los ganadores.';
+    const state = complete ? 'Votos completos' : 'Faltan votos';
     return {
       title: 'Mi espacio · PROM AWARDS 2026',
       dust: 30,
@@ -413,14 +440,14 @@
           <div class="greet-photo">${avatar(u, 'av-xl')}<i></i></div>
           <div><p class="eyebrow">PROM AWARDS 2026</p>
           <h1 class="h1">¡Hola, ${esc(first(u.name).toUpperCase())}!</h1>
-          <p class="serif lede-s">Es momento de nominar a los personajes de nuestra promoción.</p></div>
+          <p class="serif lede-s">Es momento de votar por los personajes de nuestra promoción.</p></div>
         </section>
 
         <section class="spot rise" style="--d:.12s">
           <div class="spot-text">
-            <p class="eyebrow">${conf ? 'Enviadas' : open ? 'Fase 1' : 'Fase 1 · Cerrada'}</p>
-            <h2 class="h2">${conf ? 'Tus nominaciones ya están registradas.' : open ? 'Las nominaciones están abiertas.' : 'Las nominaciones están cerradas.'}</h2>
-            <p class="muted">${conf ? 'Gracias por participar. Pronto conocerás a los nominados oficiales.' : open ? 'Selecciona a tus compañeros en las categorías que mejor los representan.' : 'El comité cerró la recepción de nominaciones. Vuelve pronto.'}</p>
+            <p class="eyebrow">${open ? 'Votación' : runoffs.length ? 'Desempate' : 'Votación cerrada'}</p>
+            <h2 class="h2">${head}</h2>
+            <p class="muted">${text}</p>
             <div class="actions">${cta}</div>
           </div>
           <div class="spot-art" aria-hidden="true">${statuette('d')}</div>
@@ -428,17 +455,17 @@
 
         <section class="stats rise" style="--d:.2s" aria-label="Tu progreso">
           <div><b>${total}</b><span>Categorías disponibles</span></div>
-          <div><b>${done}</b><span>Categorías completadas</span></div>
+          <div><b>${done}</b><span>Categorías votadas</span></div>
           <div class="stat-prog"><b>${pct}<small>%</small></b><span>Progreso</span><i class="meter"><u style="width:${pct}%"></u></i></div>
-          <div><span class="chip ${conf ? 'chip-ok' : 'chip-warn'}">${conf ? ui('check') : '<i class="dot"></i>'}${state}</span><span>Estado</span></div>
+          <div><span class="chip ${complete ? 'chip-ok' : 'chip-warn'}">${complete ? ui('check') : '<i class="dot"></i>'}${state}</span><span>Estado</span></div>
         </section>
 
         <section class="rise" style="--d:.28s">
           <header class="row-head"><h2 class="h3">Categorías</h2><a class="link" href="#/categorias">Ver todas ${ui('next')}</a></header>
           <div class="mini-grid">
             ${cats.map((c, i) => {
-              const s = hasSel(c);
-              return `<a class="mini ${s ? 'done' : ''}" href="#/nominar/${i + 1}"><span class="n">${pad(i + 1)}</span><span class="t">${esc(c.name)}</span><i class="tick" aria-label="${s ? 'Completada' : 'Pendiente'}">${s ? ui('check') : ''}</i></a>`;
+              const sv = hasSel(c);
+              return `<a class="mini ${sv ? 'done' : ''}" href="#/nominar/${i + 1}"><span class="n">${pad(i + 1)}</span><span class="t">${esc(c.name)}</span><i class="tick" aria-label="${sv ? 'Votada' : 'Pendiente'}">${sv ? ui('check') : ''}</i></a>`;
             }).join('')}
           </div>
         </section>
@@ -449,7 +476,7 @@
   /* ---------- 4. CATÁLOGO ---------- */
   let catFilter = 'all';
   views.categorias = () => {
-    const cats = activeCats(), conf = isConfirmed();
+    const cats = activeCats(), open = S.settings.open;
     const nDone = cats.filter(hasSel).length;
     const list = cats.filter((c) => catFilter === 'all' || (catFilter === 'done') === hasSel(c));
     return {
@@ -460,48 +487,47 @@
       html: `
       <section class="wrap page">
         <header class="page-head rise">
-          <p class="eyebrow">${cats.length} categorías · ${nDone} completadas</p>
+          <p class="eyebrow">${cats.length} categorías · ${nDone} votadas</p>
           <h1 class="h1">Las categorías.</h1>
           <p class="serif lede-s">Cada promoción tiene sus personajes. Llegó el momento de reconocerlos.</p>
           ${orn()}
         </header>
         <div class="tabs rise" role="tablist" aria-label="Filtrar categorías" style="--d:.1s">
-          ${[['all', 'Todas', cats.length], ['pend', 'Pendientes', cats.length - nDone], ['done', 'Completadas', nDone]].map(([k, l, n]) => `<button role="tab" aria-selected="${catFilter === k}" class="tab ${catFilter === k ? 'on' : ''}" data-act="cat-filter" data-k="${k}">${l}<small>${n}</small></button>`).join('')}
+          ${[['all', 'Todas', cats.length], ['pend', 'Pendientes', cats.length - nDone], ['done', 'Votadas', nDone]].map(([k, l, n]) => `<button role="tab" aria-selected="${catFilter === k}" class="tab ${catFilter === k ? 'on' : ''}" data-act="cat-filter" data-k="${k}">${l}<small>${n}</small></button>`).join('')}
         </div>
         <div class="cat-grid">
           ${list.length ? list.map((c) => {
-            const i = cats.indexOf(c), s = hasSel(c), nom = s ? P(mySel()[c.id]) : null;
-            return `<article class="cat-card ${s ? 'done' : ''}" style="--d:${Math.min(i, 12) * 0.04}s" data-act="go" data-to="nominar/${i + 1}">
+            const i = cats.indexOf(c), sv = hasSel(c), nom = sv ? P(mySel()[c.id]) : null;
+            return `<article class="cat-card ${sv ? 'done' : ''}" style="--d:${Math.min(i, 12) * 0.04}s" data-act="go" data-to="nominar/${i + 1}">
               <header><span class="n">${pad(i + 1)}</span>${medal(c.icon)}</header>
               <h2 class="cat-name">${esc(c.name)}</h2>
               <p class="cat-desc">“${esc(c.desc)}”</p>
               <footer>
                 ${nom ? `<span class="nom">${avatar(nom, 'av-xs')}<span>${esc(nom.name)}</span></span>` : '<span class="chip">Pendiente</span>'}
-                <a class="btn btn-sm ${s ? 'btn-ghost' : ''}" href="#/nominar/${i + 1}">${conf ? 'Ver' : s ? 'Cambiar' : 'Nominar'}</a>
+                <a class="btn btn-sm ${sv ? 'btn-ghost' : ''}" href="#/nominar/${i + 1}">${!open ? 'Ver' : sv ? 'Cambiar' : 'Votar'}</a>
               </footer>
             </article>`;
-          }).join('') : `<p class="empty">${catFilter === 'done' ? 'Aún no has completado ninguna categoría.' : '¡Has completado todas las categorías!'}</p>`}
+          }).join('') : `<p class="empty">${catFilter === 'done' ? 'Aún no has votado en ninguna categoría.' : '¡Has votado en todas las categorías!'}</p>`}
         </div>
-        <div class="actions center end"><a class="btn btn-ghost" href="#/dashboard">Volver al panel</a><a class="btn" href="#/resumen">Ver resumen</a></div>
+        <div class="actions center end"><a class="btn btn-ghost" href="#/dashboard">Volver al panel</a><a class="btn" href="#/resumen">Ver mis votos</a></div>
       </section>`
     };
   };
 
-  /* ---------- 5. SELECCIÓN DE NOMINADOS ---------- */
+  /* ---------- 5. VOTAR ---------- */
   let navDir = 'next';
   views.nominar = (arg) => {
-    const cats = activeCats(), conf = isConfirmed();
+    const cats = activeCats();
     const n = Math.min(Math.max(parseInt(arg, 10) || 1, 1), cats.length);
     const c = cats[n - 1];
     if (!c) return views.categorias();
-    const sel = mySel()[c.id];
-    const people = S.participants.filter((p) => p.active && p.status === 'approved').sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    const runoff = c.round > 1 && c.runoffOpen, can = votable(c), sel = selOf(c);
+    const people = roster().filter((p) => !runoff || c.runoffCandidates.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name, 'es'));
     return {
       title: `${c.name} · PROM AWARDS 2026`,
       dust: 18,
-      meta: { n, c },
       headClass: 'bar',
-      head: appBar('cats', '#/categorias'),
+      head: appBar('cats', runoff ? '#/dashboard' : '#/categorias'),
       html: `
       <section class="wrap page nominate" data-cat="${c.id}">
         <div class="slide dir-${navDir}">
@@ -509,15 +535,15 @@
             <div class="nom-title">
               <span class="nom-num gold-text" aria-hidden="true">${pad(n)}</span>
               <div>
-                <p class="eyebrow">Categoría ${n} de ${cats.length}</p>
+                <p class="eyebrow">${runoff ? 'Desempate · solo entre los empatados' : `Categoría ${n} de ${cats.length}`}</p>
                 <h1 class="h1 nom-h">${esc(c.name)}.</h1>
                 <p class="serif lede-s">${esc(c.desc)}</p>
               </div>
               ${medal(c.icon)}
             </div>
-            <nav class="rail" aria-label="Categorías">
+            ${runoff ? '' : `<nav class="rail" aria-label="Categorías">
               ${cats.map((x, i) => `<a href="#/nominar/${i + 1}" class="rail-i ${hasSel(x) ? 'done' : ''} ${i + 1 === n ? 'cur' : ''}" aria-label="Categoría ${i + 1}: ${esc(x.name)}" ${i + 1 === n ? 'aria-current="step"' : ''}>${pad(i + 1)}</a>`).join('')}
-            </nav>
+            </nav>`}
           </header>
           <div class="nom-tools">
             <label class="search">${ui('search')}<span class="sr">Buscar compañero</span><input id="q" type="search" placeholder="BUSCAR COMPAÑERO..." autocomplete="off"></label>
@@ -526,21 +552,23 @@
           <div class="pgrid" id="pgrid">
             ${people.map((p, i) => {
               const self = p.id === S.user;
-              return `<button class="pcard ${sel === p.id ? 'sel' : ''} ${self ? 'self' : ''}" data-act="pick" data-id="${p.id}" data-name="${esc((p.name + ' ' + p.alias).toLowerCase())}" aria-pressed="${sel === p.id}" ${conf ? 'disabled' : ''} style="--i:${Math.min(i, 16)}">
+              return `<button class="pcard ${sel === p.id ? 'sel' : ''} ${self ? 'self' : ''}" data-act="pick" data-id="${p.id}" data-name="${esc((p.name + ' ' + p.alias).toLowerCase())}" aria-pressed="${sel === p.id}" ${can ? '' : 'disabled'} style="--i:${Math.min(i, 16)}">
                 <span class="frame">${pic(p, '', 'Fotografía de ' + p.name, i < 8)}<i class="glow"></i></span>
                 <span class="tick">${ui('check')}</span>
-                <span class="cap"><b>${esc(p.name)}</b>${p.alias ? `<small class="alias">“${esc(p.alias)}”</small>` : ''}${self ? '<em>Eres tú</em>' : '<em class="on-sel">Nominado</em>'}</span>
+                <span class="cap"><b>${esc(p.name)}</b>${p.alias ? `<small class="alias">“${esc(p.alias)}”</small>` : ''}${self ? '<em>Eres tú</em>' : '<em class="on-sel">Tu voto</em>'}</span>
               </button>`;
             }).join('')}
           </div>
           <p class="empty" id="none" hidden>Ningún compañero coincide con tu búsqueda.</p>
         </div>
       </section>
-      <nav class="dock actionbar" aria-label="Navegación entre categorías"><div class="wrap dock-in">
-        <div class="dock-prog"><span>Categoría ${n} de ${cats.length}</span><i class="meter"><u id="dock-bar" style="width:${(n / cats.length) * 100}%"></u></i><small id="dock-done"></small></div>
+      <nav class="dock actionbar" aria-label="${runoff ? 'Desempate' : 'Navegación entre categorías'}"><div class="wrap dock-in">
+        <div class="dock-prog"><span>${runoff ? 'Desempate' : `Categoría ${n} de ${cats.length}`}</span><i class="meter"><u id="dock-bar" style="width:${runoff ? 100 : (n / cats.length) * 100}%"></u></i><small id="dock-done"></small></div>
         <div class="dock-btns">
-          <button class="btn btn-ghost" data-act="nav-prev" ${n === 1 ? 'disabled' : ''}>${ui('back')}<span><span class="long">Categoría </span>anterior</span></button>
-          <button class="btn" data-act="nav-next"><span>${n === cats.length ? 'Ver resumen' : 'Siguiente<span class="long"> categoría</span>'}</span>${ui('next')}</button>
+          ${runoff
+            ? `<a class="btn" href="#/dashboard"><span>Listo, volver al panel</span>${ui('next')}</a>`
+            : `<button class="btn btn-ghost" data-act="nav-prev" ${n === 1 ? 'disabled' : ''}>${ui('back')}<span><span class="long">Categoría </span>anterior</span></button>
+          <button class="btn" data-act="nav-next"><span>${n === cats.length ? 'Ver mis votos' : 'Siguiente<span class="long"> categoría</span>'}</span>${ui('next')}</button>`}
         </div>
       </div></nav>`,
       mount: () => {
@@ -561,98 +589,60 @@
   const updateNominate = () => {
     const root = $('.nominate'); if (!root) return;
     const cats = activeCats(), c = cats.find((x) => x.id === root.dataset.cat);
-    const sel = mySel()[c.id];
+    const sel = selOf(c);
     $$('.pcard').forEach((b) => { const on = b.dataset.id === sel; b.classList.toggle('sel', on); b.setAttribute('aria-pressed', on); });
     const ban = $('#banner');
-    if (sel && P(sel)) {
+    if (!votable(c)) {
+      ban.className = 'banner';
+      ban.innerHTML = `<span><em>${sel && P(sel) ? 'Tu voto: ' + esc(P(sel).name) + '. ' : ''}La votación está cerrada.</em></span>`;
+    } else if (sel && P(sel)) {
       ban.className = 'banner on';
-      ban.innerHTML = `${ui('check')}<span><b>NOMINADO SELECCIONADO</b><em>${esc(P(sel).name)}</em></span><small class="st" id="save-st"></small>`;
+      ban.innerHTML = `${ui('check')}<span><b>TU VOTO</b><em>${esc(P(sel).name)}</em></span><small class="st" id="save-st"></small>`;
     } else {
       ban.className = 'banner';
-      ban.innerHTML = `<span><em>Toca una fotografía para nominar: se guarda sola. Si tocas otra, reemplaza a la anterior.</em></span>`;
+      ban.innerHTML = `<span><em>Toca una fotografía para votar: se guarda sola. Si tocas otra, cambia tu voto.</em></span>`;
     }
     $$('.rail-i').forEach((a, i) => a.classList.toggle('done', hasSel(cats[i])));
     const d = doneCount();
-    $('#dock-done').textContent = `${d} de ${cats.length} completadas`;
+    const dd = $('#dock-done'); if (dd) dd.textContent = `${d} de ${cats.length} votadas`;
   };
 
-  /* ---------- 6. RESUMEN ---------- */
+  /* ---------- 6. MIS VOTOS ---------- */
   views.resumen = () => {
-    const cats = activeCats(), conf = isConfirmed();
+    const cats = activeCats(), open = S.settings.open;
     const done = doneCount(), pend = cats.length - done;
+    const runoffs = cats.filter((c) => c.runoffOpen);
     return {
-      title: 'Tus nominaciones · PROM AWARDS 2026',
+      title: 'Mis votos · PROM AWARDS 2026',
       dust: 22,
       headClass: 'bar',
       head: appBar('sum', '#/dashboard'),
       html: `
       <section class="wrap page">
         <header class="page-head rise">
-          <p class="eyebrow">${conf ? 'Enviadas' : 'Revisión final'}</p>
-          <h1 class="h1">Tus nominaciones.</h1>
-          <p class="serif lede-s">${conf ? 'Estas son las nominaciones que enviaste. Ya no se pueden modificar.' : 'Revisa a los personajes que has seleccionado antes de confirmar tu participación.'}</p>
+          <p class="eyebrow">${open ? 'Tu votación' : 'Votación cerrada'}</p>
+          <h1 class="h1">Mis votos.</h1>
+          <p class="serif lede-s">${open ? 'Tus votos se guardan solos. Puedes cambiarlos hasta que el organizador cierre la votación.' : 'La votación está cerrada. Estos son los votos que diste.'}</p>
           ${orn()}
         </header>
         <section class="stats compact rise" style="--d:.08s" aria-label="Totales">
-          <div><b>${done}</b><span>Categorías completadas</span></div>
+          <div><b>${done}</b><span>Categorías votadas</span></div>
           <div><b>${pend}</b><span>Categorías pendientes</span></div>
-          <div><b>${done}</b><span>Total de selecciones</span></div>
         </section>
+        ${runoffs.length ? `<section class="callout warn rise"><span>${ui('bell')}</span><span><b>Desempate abierto</b> ${runoffs.map((c) => `<a class="link" href="#/nominar/${cats.indexOf(c) + 1}">${esc(c.name)}</a>`).join(' · ')}</span></section>` : ''}
         <ul class="sum-list">
           ${cats.map((c, i) => {
-            const s = hasSel(c), nom = s ? P(mySel()[c.id]) : null;
-            return `<li class="sum-row ${s ? '' : 'pending'}" style="--d:${Math.min(i, 14) * 0.035}s">
+            const sv = hasSel(c), nom = sv ? P(mySel()[c.id]) : null;
+            return `<li class="sum-row ${sv ? '' : 'pending'}" style="--d:${Math.min(i, 14) * 0.035}s">
               <span class="n">${pad(i + 1)}</span>
               <span class="sum-cat">${icon(c.icon, 'ci')}<b>${esc(c.name)}</b></span>
-              <span class="sum-nom">${nom ? `${avatar(nom, 'av-md')}<span>${esc(nom.name)}</span>` : '<i class="ghost-av"></i><span class="muted caps">Pendiente</span>'}</span>
-              ${conf ? '<span></span>' : `<a class="btn btn-sm btn-ghost" href="#/nominar/${i + 1}">${s ? ui('edit') + 'Editar' : 'Nominar'}</a>`}
+              <span class="sum-nom">${nom ? `${avatar(nom, 'av-md')}<span>${esc(nom.name)}</span>` : '<i class="ghost-av"></i><span class="muted caps">Sin voto</span>'}</span>
+              ${open ? `<a class="btn btn-sm btn-ghost" href="#/nominar/${i + 1}">${sv ? ui('edit') + 'Cambiar' : 'Votar'}</a>` : '<span></span>'}
             </li>`;
           }).join('')}
         </ul>
         <div class="actions center end">
-          ${conf ? '<a class="btn" href="#/exito">Ver confirmación</a>'
-            : `<a class="btn btn-ghost" href="#/categorias">Seguir nominando</a><button class="btn" data-act="confirm-open">Confirmar nominaciones</button>`}
-        </div>
-      </section>`
-    };
-  };
-
-  const confirmModal = () => {
-    const pend = activeCats().length - doneCount();
-    openModal(`
-      <div class="modal-body center">
-        ${statuette('m', 'm-stat')}
-        <h2 class="h2" id="mt">¿Estás seguro?</h2>
-        <p>Una vez confirmadas tus nominaciones, no podrás modificarlas.</p>
-        ${pend ? `<p class="muted fine">Tienes ${pend} ${pend === 1 ? 'categoría pendiente' : 'categorías pendientes'} que quedarán sin nominado.</p>` : ''}
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-ghost" data-act="modal-close" autofocus>Volver a revisar</button>
-        <button class="btn" data-act="confirm-send">Confirmar y enviar</button>
-      </div>`, 'modal-sm');
-  };
-
-  /* ---------- 7. ÉXITO ---------- */
-  views.exito = () => {
-    const u = me(), n = doneCount(), total = activeCats().length;
-    return {
-      title: 'Participación completada · PROM AWARDS 2026',
-      dust: 50,
-      burst: true,
-      html: `
-      <section class="done-view">
-        <div class="done-light" aria-hidden="true"></div>
-        <div class="wrap done-in">
-          <div class="done-stat rise">${statuette('x')}</div>
-          <p class="eyebrow rise" style="--d:.2s">Gracias por participar</p>
-          <h1 class="h1 rise" style="--d:.3s">¡Tus nominaciones han sido registradas!</h1>
-          <p class="serif lede-s rise" style="--d:.4s">Gracias por formar parte de esta edición de PROM AWARDS ${eventDate().getFullYear()}.<br>Ahora solo queda esperar para conocer a nuestros nominados oficiales.</p>
-          <dl class="facts facts-sm rise" style="--d:.5s">
-            <div><dt>Participante</dt><dd>${esc(u.name)}</dd></div>
-            <div><dt>Categorías respondidas</dt><dd>${n} de ${total}</dd></div>
-            <div><dt>Estado</dt><dd class="is-open"><i class="dot"></i>Participación completada</dd></div>
-          </dl>
-          <div class="actions center rise" style="--d:.6s"><button class="btn btn-lg" data-act="finish">Volver al inicio</button></div>
+          ${open ? '<a class="btn" href="#/categorias">Seguir votando</a>' : '<a class="btn btn-ghost" href="#/dashboard">Volver al panel</a>'}
         </div>
       </section>`
     };
@@ -669,7 +659,7 @@
         <p class="eyebrow">${rej ? 'Solicitud no aprobada' : 'Solicitud enviada'}</p>
         ${avatar(u, 'av-xl')}
         <h1 class="h1">${rej ? 'No pudimos aprobar tu acceso.' : `¡Gracias, ${esc(first(u.name))}!`}</h1>
-        <p class="muted">${rej ? 'Si crees que es un error, habla con el organizador.' : 'El organizador revisará tu solicitud. Cuando la apruebe podrás nominar a tus compañeros. Esta pantalla se actualiza sola.'}</p>
+        <p class="muted">${rej ? 'Si crees que es un error, habla con el organizador.' : 'El organizador revisará tu solicitud. Cuando la apruebe podrás votar por tus compañeros. Esta pantalla se actualiza sola.'}</p>
         ${orn()}
         <div class="actions center">${rej ? '' : '<button class="btn" data-act="pend-check">Comprobar ahora</button>'}${LOGOUT.replace('btn-out', 'btn-ghost')}</div>
       </div></div></section>`,
@@ -734,7 +724,16 @@
   /* =====================================================================
      ADMINISTRACIÓN
      ===================================================================== */
-  const ADMIN_NAV = [['', 'Resumen', 'grid'], ['participantes', 'Participantes', 'users'], ['categorias', 'Categorías', 'tag'], ['nominaciones', 'Nominaciones', 'chart'], ['configuracion', 'Configuración', 'gear']];
+  const ADMIN_NAV = [['', 'Resumen', 'grid'], ['participantes', 'Participantes', 'users'], ['categorias', 'Categorías', 'tag'], ['nominaciones', 'Resultados', 'chart'], ['configuracion', 'Configuración', 'gear']];
+  /* Avisos arriba del panel: empates por resolver y desempates en curso (solo con la votación cerrada) */
+  const adminAlerts = () => {
+    if (S.settings.open) return '';
+    const cs = activeCats(), ties = cs.filter((c) => outcome(c).state === 'tie'), run = cs.filter((c) => c.runoffOpen);
+    let h = '';
+    if (ties.length) h += `<a class="alert warn" href="#/admin/nominaciones">${ui('bell')}<span><b>Empate en ${ties.length} ${ties.length === 1 ? 'categoría' : 'categorías'}.</b> ${esc(ties.map((c) => c.name).join(' · '))}. Decide si comparten el premio o abre un desempate.</span><i>Resolver ${ui('next')}</i></a>`;
+    if (run.length) h += `<a class="alert" href="#/admin/nominaciones">${ui('chart')}<span><b>Desempate en curso en ${run.length} ${run.length === 1 ? 'categoría' : 'categorías'}.</b> ${esc(run.map((c) => c.name).join(' · '))}.</span><i>Ver ${ui('next')}</i></a>`;
+    return h;
+  };
   const adminShell = (key, title, sub, inner, actions = '') => `
     <section class="admin">
       <aside class="side">
@@ -745,6 +744,7 @@
         <a class="side-back" href="#/">${ui('home')}<span>Volver al sitio</span></a>
       </aside>
       <div class="admin-main">
+        ${adminAlerts()}
         <header class="admin-head rise"><div><p class="eyebrow">${sub}</p><h1 class="h1">${title}</h1></div><div class="actions">${actions}${bellBtn()}${LOGOUT.replace('btn-out', 'btn-ghost')}</div></header>
         ${inner}
       </div>
@@ -782,7 +782,7 @@
     });
     const days = (() => {
       const end0 = new Date(); end0.setHours(23, 59, 59, 999); const out = [];
-      for (let i = 14; i >= 0; i--) { const e = new Date(end0); e.setDate(e.getDate() - i); out.push(S.nomDates.filter((d) => new Date(d) <= e).length); }
+      for (let i = 14; i >= 0; i--) { const e = new Date(end0); e.setDate(e.getDate() - i); out.push(S.allVotes.filter((v) => new Date(v.created_at) <= e).length); }
       return out;
     })();
     const mx = Math.max(...days, 1);
@@ -790,34 +790,34 @@
     return {
       title: 'Administración · PROM AWARDS',
       dust: 14,
-      html: adminShell('', 'Resumen general', 'Fase 1 · Nominaciones', `
+      html: adminShell('', 'Resumen general', S.settings.open ? 'Votación en curso' : 'Votación cerrada', `
         <section class="kpis rise" style="--d:.08s">
           <div><b>${s.tot}</b><span>Participantes registrados</span></div>
           <div><b>${s.cats}</b><span>Categorías</span></div>
-          <div><b>${s.done}</b><span>Completaron nominaciones</span></div>
+          <div><b>${s.done}</b><span>Completaron su votación</span></div>
           <div class="kpi-ring">
             <svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="44" class="r-bg"/><circle cx="50" cy="50" r="44" class="r-fg" stroke-dasharray="${circ}" stroke-dashoffset="${circ * (1 - s.pct / 100)}"/></svg>
             <b>${s.pct}<small>%</small></b><span>Participación</span>
           </div>
-          <div><b>${s.noms}</b><span>Nominaciones recibidas</span></div>
+          <div><b>${s.noms}</b><span>Votos recibidos</span></div>
         </section>
         <div class="two">
           <section class="panel rise" style="--d:.16s">
-            <header class="row-head"><h2 class="h3">Nominaciones acumuladas</h2><span class="muted caps">Últimos 15 días</span></header>
-            <svg class="bars" viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="Gráfico de nominaciones acumuladas">
-              ${days.map((v, i) => { const h = Math.max(4, (v / mx) * 108); return `<rect x="${i * 20 + 3}" y="${118 - h}" width="14" height="${h}" class="${i === days.length - 1 ? 'hi' : ''}"><title>${v} nominaciones</title></rect>`; }).join('')}
+            <header class="row-head"><h2 class="h3">Votos acumulados</h2><span class="muted caps">Últimos 15 días</span></header>
+            <svg class="bars" viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="Gráfico de votos acumulados">
+              ${days.map((v, i) => { const h = Math.max(4, (v / mx) * 108); return `<rect x="${i * 20 + 3}" y="${118 - h}" width="14" height="${h}" class="${i === days.length - 1 ? 'hi' : ''}"><title>${v} votos</title></rect>`; }).join('')}
             </svg>
           </section>
           <section class="panel rise" style="--d:.22s">
-            <header class="row-head"><h2 class="h3">Líderes por categoría</h2><a class="link" href="#/admin/nominaciones">Ver resultados ${ui('next')}</a></header>
+            <header class="row-head"><h2 class="h3">${S.settings.open ? 'Líderes por categoría' : 'Resultados por categoría'}</h2><a class="link" href="#/admin/nominaciones">Ver resultados ${ui('next')}</a></header>
             <ul class="leaders">
               ${leaders.map((l) => `<li>${l.p ? avatar(l.p, 'av-sm') : '<i class="ghost-av"></i>'}<span><b>${l.p ? esc(l.p.name) : 'Sin votos'}</b><em>${esc(l.c.name)}</em></span><strong>${l.n}</strong></li>`).join('')}
             </ul>
           </section>
         </div>
         <section class="panel rise" style="--d:.28s">
-          <header class="row-head"><h2 class="h3">Pendientes de participar</h2><span class="muted caps">${pending.length} participantes</span></header>
-          ${pending.length ? `<ul class="pend">${pending.map((p) => `<li>${avatar(p, 'av-sm')}<span>${esc(p.name)}</span></li>`).join('')}</ul>` : '<p class="muted">Todos los participantes completaron sus nominaciones.</p>'}
+          <header class="row-head"><h2 class="h3">Pendientes de votar</h2><span class="muted caps">${pending.length} participantes</span></header>
+          ${pending.length ? `<ul class="pend">${pending.map((p) => `<li>${avatar(p, 'av-sm')}<span>${esc(p.name)}</span></li>`).join('')}</ul>` : '<p class="muted">Todos los participantes completaron su votación.</p>'}
         </section>`)
     };
   }
@@ -839,7 +839,7 @@
         <div class="agrid">
           ${list.map((p, i) => `<article class="acard" style="--d:${Math.min(i, 14) * 0.03}s">
             <span class="frame">${pic(p)}</span>
-            <div class="acard-b"><b>${esc(p.name)}</b>${p.alias ? `<small class="alias">“${esc(p.alias)}”</small>` : ''}${hasDone(p) ? `<span class="chip chip-ok">${ui('check')}Completó</span>` : '<span class="chip">Pendiente</span>'}</div>
+            <div class="acard-b"><b>${esc(p.name)}</b>${p.alias ? `<small class="alias">“${esc(p.alias)}”</small>` : ''}${hasDone(p) ? `<span class="chip chip-ok">${ui('check')}Votó todo</span>` : `<span class="chip">${votedCount(p.id)} de ${activeCats().length}</span>`}</div>
             <button class="btn btn-sm btn-ghost btn-block" data-act="p-edit" data-id="${p.id}">${ui('edit')}Editar</button>
           </article>`).join('') || '<p class="empty">Ningún participante coincide con la búsqueda.</p>'}
         </div>`, `<button class="btn" data-act="p-add">${ui('plus')}Agregar participante</button>`),
@@ -903,39 +903,105 @@
 
   let nomCat = null, nomAll = false;
   function adminNoms() {
-    const cats = S.categories;
+    const cats = activeCats(), open = S.settings.open;
     if (!nomCat || !cats.find((c) => c.id === nomCat)) nomCat = cats[0] && cats[0].id;
     const c = cats.find((x) => x.id === nomCat);
-    let rows = [], total = 0;
+    const label = (x) => {
+      if (open) return String(catTotal(x.id));
+      const o = outcome(x);
+      return { winner: 'Ganador', shared: 'Compartido', tie: 'Empate', runoff: 'Desempate', none: '—' }[o.state];
+    };
+    const names = (ids) => ids.map((id) => esc((P(id) || { name: '?' }).name)).join(' y ');
+    let panel = '<p class="empty">No hay categorías.</p>';
     if (c) {
-      const v = votes(c.id); total = Object.values(v).reduce((a, b) => a + b, 0);
-      rows = Object.entries(v).map(([id, n]) => ({ p: P(id), n })).sort((a, b) => b.n - a.n || a.p.name.localeCompare(b.p.name, 'es'));
+      const o = outcome(c);
+      let rows = Object.entries(o.v).map(([id, n]) => ({ p: P(id), n })).filter((r) => r.p);
+      if (c.round > 1) rows = rows.filter((r) => c.runoffCandidates.includes(r.p.id));
+      rows.sort((a, b) => b.n - a.n || a.p.name.localeCompare(b.p.name, 'es'));
+      const total = rows.reduce((a, r) => a + r.n, 0), mx = rows[0] ? Math.max(rows[0].n, 1) : 1;
+      const shown = nomAll ? rows : rows.filter((r, i) => i < 8);
+      let status = '';
+      if (open) status = `<div class="callout">${ui('chart')}<span><b>Avance del ranking.</b> La votación sigue abierta; los ganadores se definen al cerrarla.</span></div>`;
+      else if (o.state === 'runoff') status = `<div class="callout">${ui('chart')}<span><b>Desempate en curso</b> entre ${names(c.runoffCandidates)}. ${total} ${total === 1 ? 'voto recibido' : 'votos recibidos'}.</span></div>
+        <div class="actions"><button class="btn" data-act="runoff-close" data-id="${c.id}">Cerrar desempate</button></div>`;
+      else if (o.state === 'tie') status = `<div class="callout warn">${ui('bell')}<span><b>Empate:</b> ${names(o.leaders)} con ${o.max} ${o.max === 1 ? 'voto' : 'votos'} cada uno.</span></div>
+        <div class="actions"><button class="btn" data-act="tie-shared" data-id="${c.id}">Que ganen todos los empatados</button><button class="btn btn-ghost" data-act="tie-runoff" data-id="${c.id}">Abrir desempate</button></div>
+        <p class="fine">El desempate abre una votación solo en esta categoría, donde únicamente aparecen los empatados.</p>`;
+      else if (o.state === 'none') status = `<div class="callout">${ui('chart')}<span>${c.round > 1 ? 'Nadie votó en el desempate.' : 'Esta categoría no recibió votos.'}</span></div>${c.round > 1 ? `<div class="actions"><button class="btn btn-ghost" data-act="runoff-reopen" data-id="${c.id}">Reabrir desempate</button></div>` : ''}`;
+      else status = `<div class="callout ok">${ui('check')}<span><b>${o.state === 'shared' ? 'Ganan todos los empatados' : 'Ganador'}</b> con ${o.max} ${o.max === 1 ? 'voto' : 'votos'}.</span></div>
+        <div class="winners">${o.winners.map((id) => { const w = P(id); return `<article class="winner">${avatar(w, 'av-xl')}<div><b>${esc(w.name)}</b>${w.alias ? `<em>“${esc(w.alias)}”</em>` : ''}</div><button class="btn btn-sm" data-act="diploma" data-cat="${c.id}" data-id="${w.id}">${ui('edit')}Generar diploma</button></article>`; }).join('')}</div>`;
+      panel = `
+        <header><p class="eyebrow">Categoría ${pad(cats.indexOf(c) + 1)} · ${total} ${total === 1 ? 'voto' : 'votos'}${c.round > 1 ? ' · desempate' : ''}</p><h2 class="h2">${esc(c.name)}.</h2><p class="serif lede-s">${esc(c.desc)}</p></header>
+        ${status}
+        ${total ? `<ol class="rbars">
+          ${shown.map((r, i) => `<li class="${i === 0 && !open ? 'lead' : ''}" style="--i:${i}">
+            <span class="pos">${pad(i + 1)}</span>${avatar(r.p, 'av-md')}
+            <span class="rname"><b>${esc(r.p.name)}</b><i class="rbar"><u style="--w:${(r.n / mx) * 100}%"></u></i></span>
+            <strong>${r.n}</strong></li>`).join('')}
+        </ol>
+        ${rows.length > 8 ? `<button class="btn btn-sm btn-ghost" data-act="nom-all">${nomAll ? 'Ver solo los 8 primeros' : `Ver los ${rows.length} participantes`}</button>` : ''}`
+          : '<p class="empty">Aún no hay votos en esta categoría.</p>'}`;
     }
-    const mx = rows[0] ? Math.max(rows[0].n, 1) : 1;
-    const shown = nomAll ? rows : rows.filter((r, i) => i < 8);
     return {
-      title: 'Nominaciones · Administración',
+      title: 'Resultados · Administración',
       dust: 14,
-      html: adminShell('nominaciones', 'Resultados de nominaciones', 'Vista exclusiva de administración', `
+      html: adminShell('nominaciones', open ? 'Avance de la votación' : 'Resultados', open ? 'Solo lo ve el administrador' : 'Votación cerrada', `
         <div class="results">
           <nav class="rcats" aria-label="Categorías">
-            ${cats.map((x, i) => `<button class="rcat ${x.id === nomCat ? 'on' : ''}" data-act="nom-cat" data-id="${x.id}"><span class="n">${pad(i + 1)}</span><span>${esc(x.name)}</span><small>${catTotal(x.id)}</small></button>`).join('')}
+            ${cats.map((x, i) => `<button class="rcat ${x.id === nomCat ? 'on' : ''}" data-act="nom-cat" data-id="${x.id}"><span class="n">${pad(i + 1)}</span><span>${esc(x.name)}</span><small>${label(x)}</small></button>`).join('')}
           </nav>
-          <section class="rpanel rise">
-            ${c ? `
-            <header><p class="eyebrow">Categoría ${pad(cats.indexOf(c) + 1)} · ${total} nominaciones</p><h2 class="h2">${esc(c.name)}.</h2><p class="serif lede-s">${esc(c.desc)}</p></header>
-            ${total ? `<ol class="rbars">
-              ${shown.map((r, i) => `<li class="${i === 0 ? 'lead' : ''}" style="--i:${i}">
-                <span class="pos">${pad(i + 1)}</span>${avatar(r.p, 'av-md')}
-                <span class="rname"><b>${esc(r.p.name)}</b><i class="rbar"><u style="--w:${(r.n / mx) * 100}%"></u></i></span>
-                <strong>${r.n}</strong></li>`).join('')}
-            </ol>
-            ${rows.length > 8 ? `<button class="btn btn-sm btn-ghost" data-act="nom-all">${nomAll ? 'Ver solo los 8 primeros' : `Ver los ${rows.length} participantes`}</button>` : ''}`
-              : '<p class="empty">Esta categoría aún no recibe nominaciones.</p>'}` : '<p class="empty">No hay categorías.</p>'}
-          </section>
-        </div>`)
+          <section class="rpanel rise">${panel}</section>
+        </div>`, open ? `<button class="btn" data-act="close-votes">Cerrar votaciones</button>` : `<button class="btn btn-ghost" data-act="open-votes">Reabrir votaciones</button>`)
     };
   }
+
+  /* ---------- Diploma ---------- */
+  const diplomaHTML = (c, p, n, year) => `
+    <div class="diploma">
+      <div class="dip-frame">
+        <p class="dip-top">PROM AWARDS ${year}</p>
+        <h2 class="dip-title">Diploma de honor</h2>
+        <div class="dip-body">
+          <div class="dip-art">
+            <div class="dip-photo">${pic(p, '', p.name, true)}</div>
+            <div class="dip-statue" aria-hidden="true">${statuette('dp' + p.id.slice(0, 4), 'dip-stat')}</div>
+          </div>
+          <div class="dip-text">
+            <p class="dip-small">Se otorga a</p>
+            <p class="dip-name">${esc(p.name)}</p>
+            ${p.alias ? `<p class="dip-alias">“${esc(p.alias)}”</p>` : ''}
+            <p class="dip-small">por haber sido elegido</p>
+            <p class="dip-cat">${esc(c.name)}</p>
+            <p class="dip-year">Edición ${year}</p>
+          </div>
+        </div>
+        <p class="dip-foot">${n} ${n === 1 ? 'voto' : 'votos'} de la promoción</p>
+      </div>
+    </div>`;
+  const diplomaModal = (catId, pid) => {
+    const c = S.categories.find((x) => x.id === catId), p = P(pid);
+    if (!c || !p) return;
+    const o = outcome(c), year = eventDate().getFullYear();
+    openModal(`
+      <header class="modal-head"><h2 class="h3" id="mt">Diploma · ${esc(p.name)}</h2><button class="icon-btn" data-act="modal-close" aria-label="Cerrar">${ui('close')}</button></header>
+      <div class="modal-body">
+        ${diplomaHTML(c, p, o.max, year)}
+        <p class="fine">Pulsa «Imprimir / guardar PDF» y, en el destino de la impresora, elige «Guardar como PDF».</p>
+      </div>
+      <div class="modal-actions"><button class="btn btn-ghost" data-act="modal-close">Cerrar</button><button class="btn" data-act="diploma-print" data-cat="${c.id}" data-id="${p.id}">${ui('upload')}Imprimir / guardar PDF</button></div>`, 'modal-lg');
+  };
+  const printDiploma = (catId, pid) => {
+    const c = S.categories.find((x) => x.id === catId), p = P(pid);
+    if (!c || !p) return;
+    const root = document.createElement('div');
+    root.id = 'print-root';
+    root.innerHTML = diplomaHTML(c, p, outcome(c).max, eventDate().getFullYear());
+    document.body.appendChild(root);
+    document.body.classList.add('printing');
+    const done = () => { document.body.classList.remove('printing'); root.remove(); removeEventListener('afterprint', done); };
+    addEventListener('afterprint', done);
+    setTimeout(() => window.print(), 80);
+  };
 
   let editCat = null;
   function adminCats() {
@@ -949,7 +1015,7 @@
             <span class="n">${pad(i + 1)}</span>${medal(c.icon)}
             <span class="crow-t"><b>${esc(c.name)}</b><em>${esc(c.desc)}</em></span>
             <button class="chip ${c.active ? 'chip-ok' : ''}" data-act="cat-toggle" data-id="${c.id}" aria-pressed="${c.active}" title="Cambiar estado">${c.active ? ui('check') + 'Activa' : 'Oculta'}</button>
-            <span class="crow-n"><b>${catTotal(c.id)}</b><small>nominaciones</small></span>
+            <span class="crow-n"><b>${catTotal(c.id)}</b><small>votos</small></span>
             <span class="crow-a">
               <button class="icon-btn" data-act="cat-up" data-id="${c.id}" aria-label="Subir" ${i === 0 ? 'disabled' : ''}>${ui('up')}</button>
               <button class="icon-btn" data-act="cat-down" data-id="${c.id}" aria-label="Bajar" ${i === cats.length - 1 ? 'disabled' : ''}>${ui('down')}</button>
@@ -984,7 +1050,8 @@
         <form class="panel form-narrow rise" id="settings" novalidate>
           <label class="field"><span class="label">Nombre del evento</span><input id="s-name" type="text" value="${esc(S.settings.name)}"></label>
           <label class="field"><span class="label">Fecha y hora del reencuentro</span><input id="s-date" type="datetime-local" value="${esc(toLocalInput(S.settings.date))}"></label>
-          <label class="switch"><input id="s-open" type="checkbox" ${S.settings.open ? 'checked' : ''}><i></i><span>Nominaciones abiertas</span></label>
+          <label class="switch"><input id="s-open" type="checkbox" ${S.settings.open ? 'checked' : ''}><i></i><span>Votaciones abiertas</span></label>
+          <p class="fine">Al cerrarlas, nadie puede votar ni cambiar su voto. Los ganadores y empates aparecen en Resultados.</p>
           <div class="actions"><button class="btn" type="submit">Guardar cambios</button></div>
         </form>`),
       mount: () => {
@@ -1022,7 +1089,8 @@
   function render(opts = {}) {
     cleanup.forEach((f) => f()); cleanup = [];
     let { name, a, b } = parse();
-    const needsUser = ['dashboard', 'categorias', 'nominar', 'resumen', 'exito'];
+    if (name === 'exito') { history.replaceState(null, '', '#/resumen'); name = 'resumen'; }
+    const needsUser = ['dashboard', 'categorias', 'nominar', 'resumen'];
     const mine = S.user && me();
     const homeOf = () => (mine && mine.status === 'approved' ? 'dashboard' : 'pendiente');
     if (name === 'admin' && !S.authed) { accessMode = 'entrar'; afterLogin = 'admin'; history.replaceState(null, '', '#/acceso'); name = 'acceso'; }
@@ -1032,11 +1100,6 @@
     if (name === 'pendiente' && !mine) { history.replaceState(null, '', '#/acceso'); name = 'acceso'; }
     else if (name === 'pendiente' && mine.status === 'approved') { history.replaceState(null, '', '#/dashboard'); name = 'dashboard'; }
     if (name !== 'acceso') afterLogin = null;
-    if (name === 'nominar') {
-      if (isConfirmed()) { /* solo lectura */ }
-      if (!S.settings.open && !isConfirmed()) { toast('Las nominaciones están cerradas.', 'warn'); history.replaceState(null, '', '#/dashboard'); name = 'dashboard'; }
-    }
-    if (name === 'exito' && !isConfirmed()) { history.replaceState(null, '', '#/resumen'); name = 'resumen'; }
     let v;
     if (name === 'admin') v = S.isAdmin ? views.admin(a) : adminDenied();
     if (name === 'admin' && S.isAdmin) startBellPoll();
@@ -1103,22 +1166,22 @@
       try { await DB.signOut(); resetReg(); afterLogin = null; accessMode = 'registro'; await refresh(); toast('Sesión cerrada.'); go(''); }
       catch (e) { console.error(e); toast(errMsg(e), 'warn'); }
     },
-    finish: () => go(''),
     'cat-filter': (t) => { catFilter = t.dataset.k; render({ keep: true }); },
     pick: (t) => {
       const id = t.dataset.id;
-      if (isConfirmed()) return;
-      if (id === S.user) { toast('No puedes nominarte a ti mismo/a.', 'warn'); return; }
-      const root = $('.nominate'), cid = root.dataset.cat, s = mySel(), voter = S.user;
-      const prev = s[cid], next = prev === id ? null : id;
-      if (next) s[cid] = next; else delete s[cid];
+      const root = $('.nominate'), cid = root.dataset.cat, c = S.categories.find((x) => x.id === cid);
+      if (!c || !votable(c)) { toast('La votación está cerrada.', 'warn'); return; }
+      if (id === S.user) { toast('No puedes votar por ti mismo/a.', 'warn'); return; }
+      const runoff = c.round > 1, store = runoff ? S.runoffSel : mySel(), voter = S.user, round = c.round;
+      const prev = store[cid], next = prev === id ? null : id;
+      if (next) store[cid] = next; else delete store[cid];
       updateNominate(); setSt('Guardando…');
       pending++;
-      /* Guarda en orden; si falla, devuelve la selección anterior */
-      saveQ = saveQ.then(() => DB.setNomination(cid, voter, next)).then(() => { if (--pending === 0) setSt('Guardado ✓', 'ok'); }).catch((e) => {
+      /* Guarda en orden; si falla, devuelve el voto anterior */
+      saveQ = saveQ.then(() => (runoff ? DB.setRunoffVote(cid, round, voter, next) : DB.setNomination(cid, voter, next))).then(() => { if (--pending === 0) setSt('Guardado ✓', 'ok'); }).catch((e) => {
         pending--;
         console.error(e);
-        if (prev) s[cid] = prev; else delete s[cid];
+        if (prev) store[cid] = prev; else delete store[cid];
         if ($('.nominate')) updateNominate();
         toast(errMsg(e), 'warn');
       });
@@ -1128,23 +1191,6 @@
       const { n, cats } = curNom();
       if (n >= cats.length) { go('resumen'); return; }
       navDir = 'next'; go('nominar/' + (n + 1));
-    },
-    'confirm-open': () => {
-      if (doneCount() === 0) { toast('Elige al menos un nominado antes de confirmar.', 'warn'); return; }
-      confirmModal();
-    },
-    'confirm-send': async (t) => {
-      t.disabled = true; t.innerHTML = '<i class="spin"></i>Enviando…';
-      $$('[data-act="modal-close"]', modalRoot).forEach((b) => (b.disabled = true));
-      try {
-        await saveQ;                             // espera a que terminen las selecciones pendientes
-        await DB.submit(S.user);
-        S.confirmed[S.user] = true; closeModal(); go('exito');
-      } catch (e) {
-        console.error(e); toast(errMsg(e), 'warn');
-        t.disabled = false; t.textContent = 'Confirmar y enviar';
-        $$('[data-act="modal-close"]', modalRoot).forEach((b) => (b.disabled = false));
-      }
     },
     'modal-close': () => closeModal(),
     'modal-bg': (t, e) => { if (e.target === t) closeModal(); },
@@ -1165,7 +1211,30 @@
       const id = t.dataset.id;
       adminDo(t, async () => { await DB.deletePerson(id); closeModal(); toast('Participante eliminado.'); });
     },
-    /* Admin: nominaciones */
+    /* Admin: cierre de votaciones, empates y diplomas */
+    'close-votes': () => openModal(`<div class="modal-body center"><h2 class="h2" id="mt">¿Cerrar las votaciones?</h2><p>Nadie podrá votar ni cambiar su voto. En Resultados verás a los ganadores y los empates.</p></div>
+        <div class="modal-actions"><button class="btn btn-ghost" data-act="modal-close" autofocus>Cancelar</button><button class="btn" data-act="close-votes-ok">Cerrar votaciones</button></div>`, 'modal-sm'),
+    'close-votes-ok': (t) => adminDo(t, async () => {
+      await DB.saveSettings({ name: S.settings.name, date: S.settings.date, open: false });
+      closeModal(); toast('Votaciones cerradas.');
+    }),
+    'open-votes': (t) => adminDo(t, async () => {
+      await DB.saveSettings({ name: S.settings.name, date: S.settings.date, open: true });
+      toast('Votaciones reabiertas.');
+    }),
+    'tie-shared': (t) => adminDo(t, async () => { await DB.setCategoryState(t.dataset.id, { shared_win: true }); toast('Ganan todos los empatados.'); }),
+    'tie-runoff': (t) => {
+      const c = S.categories.find((x) => x.id === t.dataset.id), o = outcome(c);
+      adminDo(t, async () => {
+        await DB.setCategoryState(c.id, { round: c.round + 1, runoff_open: true, runoff_candidates: o.leaders, shared_win: false });
+        toast('Desempate abierto: solo votan entre los empatados.');
+      });
+    },
+    'runoff-close': (t) => adminDo(t, async () => { await DB.setCategoryState(t.dataset.id, { runoff_open: false }); toast('Desempate cerrado.'); }),
+    'runoff-reopen': (t) => adminDo(t, async () => { await DB.setCategoryState(t.dataset.id, { runoff_open: true }); toast('Desempate reabierto.'); }),
+    diploma: (t) => diplomaModal(t.dataset.cat, t.dataset.id),
+    'diploma-print': (t) => printDiploma(t.dataset.cat, t.dataset.id),
+    /* Admin: resultados */
     'nom-cat': (t) => { nomCat = t.dataset.id; nomAll = false; render({ keep: true }); },
     'nom-all': () => { nomAll = !nomAll; render({ keep: true }); },
     /* Admin: categorías */
@@ -1189,7 +1258,7 @@
     },
     'cat-del': (t) => {
       const c = S.categories.find((x) => x.id === t.dataset.id);
-      openModal(`<div class="modal-body center"><h2 class="h2" id="mt">¿Eliminar categoría?</h2><p>“${esc(c.name)}” dejará de aparecer para los participantes y se perderán sus nominaciones.</p></div>
+      openModal(`<div class="modal-body center"><h2 class="h2" id="mt">¿Eliminar categoría?</h2><p>“${esc(c.name)}” dejará de aparecer para los participantes y se perderán sus votos.</p></div>
         <div class="modal-actions"><button class="btn btn-ghost" data-act="modal-close" autofocus>Cancelar</button><button class="btn btn-danger-solid" data-act="cat-del-ok" data-id="${c.id}">Eliminar</button></div>`, 'modal-sm');
     },
     'cat-del-ok': (t) => {
