@@ -5,7 +5,7 @@
   const sb = supabase.createClient(supabaseUrl, supabaseKey);
   const ok = ({ data, error }) => { if (error) throw error; return data; };
 
-  const mapP = (r) => ({ id: r.id, name: r.name, alias: r.alias || '', photo: r.photo_url || null, icon: r.avatar_icon || null, userId: r.user_id, active: r.active, status: r.status, createdAt: r.created_at });
+  const mapP = (r) => ({ id: r.id, name: r.name, alias: r.alias || '', photo: r.photo_url || null, icon: r.avatar_icon || null, userId: r.user_id, active: r.active, status: r.status, eligible: r.eligible, createdAt: r.created_at });
   const mapC = (r) => ({ id: r.id, name: r.name, desc: r.description, icon: r.icon, active: r.active, position: r.position, round: r.round, runoffOpen: r.runoff_open, runoffCandidates: r.runoff_candidates || [], sharedWin: r.shared_win });
 
   const blobOf = async (dataUrl) => (await fetch(dataUrl)).blob();
@@ -28,7 +28,7 @@
       const [sRow, cats, parts, admin] = await Promise.all([
         sb.from('settings').select('name,event_date,noms_open').maybeSingle(),
         sb.from('categories').select('id,name,description,icon,position,active,round,runoff_open,runoff_candidates,shared_win').order('position').order('name'),
-        session ? sb.from('participants').select('id,name,alias,photo_url,avatar_icon,user_id,active,status,created_at').order('name') : null,
+        session ? sb.from('participants').select('id,name,alias,photo_url,avatar_icon,user_id,active,status,eligible,created_at').order('name') : null,
         session ? sb.from('admins').select('user_id').eq('user_id', uid).maybeSingle() : null
       ]);
       const row = ok(sRow);

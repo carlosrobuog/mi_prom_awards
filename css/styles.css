@@ -685,3 +685,6 @@ html{overscroll-behavior-x:none}
   body.printing{background:#080808}
 }
 @media (max-width:759px){.alert{flex-wrap:wrap}.alert>i{width:100%;justify-content:flex-end}}
+
+/* ---- Crédito ---- */
+.credit{position:relative;z-index:2;margin:0;padding:22px 16px calc(22px + env(safe-area-inset-bottom));text-align:center;font:600 10px var(--f-ui);letter-spacing:.28em;text-transform:uppercase;color:var(--mute)}

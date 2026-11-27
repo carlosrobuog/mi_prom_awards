@@ -55,6 +55,8 @@
   const hasSel = (c) => !!(mySel()[c.id] && P(mySel()[c.id]));          // voto de la ronda 1
   const doneCount = () => activeCats().filter(hasSel).length;
   const roster = () => S.participants.filter((p) => p.active && p.status === 'approved');
+  /* Elegibles: pueden recibir votos. Los administradores nunca lo son. */
+  const eligible = () => roster().filter((p) => p.eligible);
   const eventDate = () => new Date(S.settings.date);
   const toLocalInput = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 
@@ -65,7 +67,7 @@
   /* Votos reales de la ronda vigente de cada categoría (solo el admin recibe todos) */
   const votes = (catId) => {
     const c = S.categories.find((x) => x.id === catId), out = {};
-    roster().forEach((p) => { out[p.id] = 0; });
+    eligible().forEach((p) => { out[p.id] = 0; });
     const rows = !c ? [] : c.round > 1 ? S.allRunoff.filter((r) => r.category_id === catId && r.round === c.round) : S.allVotes.filter((r) => r.category_id === catId);
     rows.forEach((r) => { if (r.nominee_id in out) out[r.nominee_id]++; });
     return out;
@@ -522,7 +524,7 @@
     const c = cats[n - 1];
     if (!c) return views.categorias();
     const runoff = c.round > 1 && c.runoffOpen, can = votable(c), sel = selOf(c);
-    const people = roster().filter((p) => !runoff || c.runoffCandidates.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    const people = eligible().filter((p) => !runoff || c.runoffCandidates.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name, 'es'));
     return {
       title: `${c.name} · PROM AWARDS 2026`,
       dust: 18,
@@ -751,7 +753,7 @@
     </section>`;
 
   const adminStats = () => {
-    const done = roster().filter(hasDone).length, tot = roster().length;
+    const done = eligible().filter(hasDone).length, tot = eligible().length;
     return { done, tot, pct: tot ? Math.round((done / tot) * 100) : 0, cats: S.categories.filter((c) => c.active).length, noms: totalNoms() };
   };
 
@@ -775,7 +777,7 @@
 
   function adminOverview() {
     const s = adminStats();
-    const pending = roster().filter((p) => !hasDone(p));
+    const pending = eligible().filter((p) => !hasDone(p));
     const leaders = S.categories.filter((c) => c.active).slice(0, 6).map((c) => {
       const v = votes(c.id), top = Object.entries(v).sort((a, b) => b[1] - a[1])[0];
       return { c, p: top && top[1] ? P(top[0]) : null, n: top ? top[1] : 0 };
@@ -824,8 +826,8 @@
 
   let pFilter = 'all', pQuery = '';
   function adminPeople() {
-    const list = roster().filter((p) => (pFilter === 'all' || (pFilter === 'done') === hasDone(p)) && (!pQuery || (p.name + ' ' + p.alias).toLowerCase().includes(pQuery.toLowerCase())));
-    const nd = roster().filter(hasDone).length;
+    const list = roster().filter((p) => (pFilter === 'all' || (p.eligible && (pFilter === 'done') === hasDone(p))) && (!pQuery || (p.name + ' ' + p.alias).toLowerCase().includes(pQuery.toLowerCase())));
+    const nd = eligible().filter(hasDone).length;
     return {
       title: 'Participantes · Administración',
       dust: 14,
@@ -833,13 +835,13 @@
         <div class="toolbar rise" style="--d:.06s">
           <label class="search">${ui('search')}<span class="sr">Buscar participante</span><input id="pq" type="search" placeholder="BUSCAR PARTICIPANTE..." value="${esc(pQuery)}" autocomplete="off"></label>
           <div class="tabs" role="tablist" aria-label="Filtrar participantes">
-            ${[['all', 'Todos', roster().length], ['done', 'Completaron', nd], ['pend', 'Pendientes', roster().length - nd]].map(([k, l, n]) => `<button role="tab" aria-selected="${pFilter === k}" class="tab ${pFilter === k ? 'on' : ''}" data-act="p-filter" data-k="${k}">${l}<small>${n}</small></button>`).join('')}
+            ${[['all', 'Todos', roster().length], ['done', 'Completaron', nd], ['pend', 'Pendientes', eligible().length - nd]].map(([k, l, n]) => `<button role="tab" aria-selected="${pFilter === k}" class="tab ${pFilter === k ? 'on' : ''}" data-act="p-filter" data-k="${k}">${l}<small>${n}</small></button>`).join('')}
           </div>
         </div>
         <div class="agrid">
           ${list.map((p, i) => `<article class="acard" style="--d:${Math.min(i, 14) * 0.03}s">
             <span class="frame">${pic(p)}</span>
-            <div class="acard-b"><b>${esc(p.name)}</b>${p.alias ? `<small class="alias">“${esc(p.alias)}”</small>` : ''}${hasDone(p) ? `<span class="chip chip-ok">${ui('check')}Votó todo</span>` : `<span class="chip">${votedCount(p.id)} de ${activeCats().length}</span>`}</div>
+            <div class="acard-b"><b>${esc(p.name)}</b>${p.alias ? `<small class="alias">“${esc(p.alias)}”</small>` : ''}${!p.eligible ? `<span class="chip chip-ok">${ui('lock')}Administrador · no elegible</span>` : hasDone(p) ? `<span class="chip chip-ok">${ui('check')}Votó todo</span>` : `<span class="chip">${votedCount(p.id)} de ${activeCats().length}</span>`}</div>
             <button class="btn btn-sm btn-ghost btn-block" data-act="p-edit" data-id="${p.id}">${ui('edit')}Editar</button>
           </article>`).join('') || '<p class="empty">Ningún participante coincide con la búsqueda.</p>'}
         </div>`, `<button class="btn" data-act="p-add">${ui('plus')}Agregar participante</button>`),
