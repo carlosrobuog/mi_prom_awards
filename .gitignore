@@ -1,0 +1,17 @@
+# Archivos que Git debe ignorar (no se suben a GitHub)
+
+# Sistema y editores
+.DS_Store
+
+# Secretos y configuración personal (nunca se suben)
+.env
+.env.*
+.claude/settings.local.json
+
+# Copias de skills instaladas (se reinstalan con npx skills; skills-lock.json las registra)
+.agents/
+
+# Archivos temporales de herramientas
+.taste-skill/
+supabase/.temp/
+node_modules/
