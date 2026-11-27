@@ -5,7 +5,7 @@
   const sb = supabase.createClient(supabaseUrl, supabaseKey);
   const ok = ({ data, error }) => { if (error) throw error; return data; };
 
-  const mapP = (r) => ({ id: r.id, name: r.name, alias: r.alias || '', photo: r.photo_url || null, icon: r.avatar_icon || null, userId: r.user_id, active: r.active });
+  const mapP = (r) => ({ id: r.id, name: r.name, alias: r.alias || '', photo: r.photo_url || null, icon: r.avatar_icon || null, userId: r.user_id, active: r.active, status: r.status, createdAt: r.created_at });
   const mapC = (r) => ({ id: r.id, name: r.name, desc: r.description, icon: r.icon, active: r.active, position: r.position });
 
   const blobOf = async (dataUrl) => (await fetch(dataUrl)).blob();
@@ -28,7 +28,7 @@
       const [sRow, cats, parts, admin, subs] = await Promise.all([
         sb.from('settings').select('name,event_date,noms_open').maybeSingle(),
         sb.from('categories').select('id,name,description,icon,position,active').order('position').order('name'),
-        session ? sb.from('participants').select('id,name,alias,photo_url,avatar_icon,user_id,active').order('name') : null,
+        session ? sb.from('participants').select('id,name,alias,photo_url,avatar_icon,user_id,active,status,created_at').order('name') : null,
         session ? sb.from('admins').select('user_id').eq('user_id', uid).maybeSingle() : null,
         session ? sb.from('submissions').select('voter_id') : null
       ]);
@@ -82,7 +82,12 @@
       if (photo && photo.startsWith('data:')) photo_url = await upload(photo, 'admin');
       const row = { name, alias: alias || null, photo_url: photo_url || null, avatar_icon: photo_url ? null : icon };
       if (id) ok(await sb.from('participants').update(row).eq('id', id));
-      else ok(await sb.from('participants').insert(row));
+      else ok(await sb.from('participants').insert({ ...row, status: 'approved' }));   // lo crea un admin: entra aprobado
+    },
+    async setStatus(id, status) { ok(await sb.from('participants').update({ status }).eq('id', id)); },
+    async pendingCount() {
+      const { count, error } = await sb.from('participants').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+      if (error) throw error; return count || 0;
     },
     async deletePerson(id) { ok(await sb.from('participants').delete().eq('id', id)); },
 

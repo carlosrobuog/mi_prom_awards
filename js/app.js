@@ -56,7 +56,7 @@
   const doneCount = () => activeCats().filter(hasSel).length;
   const isConfirmed = () => !!S.confirmed[S.user];
   const hasDone = (p) => !!S.confirmed[p.id];
-  const roster = () => S.participants.filter((p) => p.active);
+  const roster = () => S.participants.filter((p) => p.active && p.status === 'approved');
   const eventDate = () => new Date(S.settings.date);
   const toLocalInput = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 
@@ -289,11 +289,14 @@
   let accessMode = 'registro';     // registro | entrar | perfil
   let afterLogin = null;           // destino pedido antes de iniciar sesión (p. ej. 'admin')
   let reg = { photo: null, icon: randIcon() };
+  const resetReg = () => { reg = { photo: null, icon: randIcon() }; };
   const regPreview = () => reg.photo
     ? `<img src="${esc(reg.photo)}" alt="Tu fotografía">`
     : `<span class="ph-ico" style="--h:${hue(reg.icon)}" aria-hidden="true">${icon(reg.icon)}</span>`;
   views.acceso = () => {
-    if (S.authed && !S.user) accessMode = 'perfil';
+    const adminIntent = afterLogin === 'admin' && !(S.authed && !S.user);
+    if (adminIntent) accessMode = 'entrar';
+    else if (S.authed && !S.user) accessMode = 'perfil';
     else if (accessMode === 'perfil') accessMode = 'registro';
     const m = accessMode, profile = m === 'registro' || m === 'perfil', creds = m !== 'perfil';
     return {
@@ -306,11 +309,11 @@
           <a class="btn btn-sm btn-ghost back-link" href="#/">${ui('back')}Volver</a>
           <div class="access-card rise">
             ${mark()}
-            <p class="eyebrow">${m === 'entrar' ? 'Acceso del participante' : m === 'perfil' ? 'Último paso' : 'Registro de la promoción'}</p>
-            <h1 class="h1">${m === 'entrar' ? 'Bienvenido de vuelta.' : m === 'perfil' ? 'Completa tu perfil.' : 'Únete a los PROM AWARDS.'}</h1>
-            <p class="muted">${m === 'entrar' ? 'Entra con tu correo y tu contraseña.' : 'Cuéntanos quién eres para que tus compañeros te reconozcan.'}</p>
+            <p class="eyebrow">${adminIntent ? 'Administración' : m === 'entrar' ? 'Acceso del participante' : m === 'perfil' ? 'Último paso' : 'Registro de la promoción'}</p>
+            <h1 class="h1">${adminIntent ? 'Acceso de administración.' : m === 'entrar' ? 'Bienvenido de vuelta.' : m === 'perfil' ? 'Completa tu perfil.' : 'Únete a los PROM AWARDS.'}</h1>
+            <p class="muted">${adminIntent ? 'Entra con la cuenta de administrador.' : m === 'entrar' ? 'Entra con tu correo y tu contraseña.' : 'Cuéntanos quién eres. El organizador revisará tu solicitud antes de darte acceso.'}</p>
             ${orn()}
-            ${m === 'perfil' ? '' : `<div class="tabs" role="tablist" aria-label="Acceso">
+            ${m === 'perfil' || adminIntent ? '' : `<div class="tabs" role="tablist" aria-label="Acceso">
               <button type="button" role="tab" class="tab ${m === 'registro' ? 'on' : ''}" aria-selected="${m === 'registro'}" data-act="acc-mode" data-k="registro">Crear cuenta</button>
               <button type="button" role="tab" class="tab ${m === 'entrar' ? 'on' : ''}" aria-selected="${m === 'entrar'}" data-act="acc-mode" data-k="entrar">Ya tengo cuenta</button>
             </div>`}
@@ -330,9 +333,9 @@
               ${creds ? `
               <label class="field"><span class="label">Correo</span><input id="f-email" type="email" autocomplete="email" inputmode="email" placeholder="tucorreo@ejemplo.com" required></label>
               <label class="field"><span class="label">Contraseña</span><input id="f-pass" type="password" autocomplete="${m === 'entrar' ? 'current-password' : 'new-password'}" minlength="6" placeholder="${m === 'entrar' ? 'Tu contraseña' : 'Mínimo 6 caracteres'}" required></label>` : ''}
-              <button class="btn btn-block" type="submit" id="acc-go">${m === 'entrar' ? 'Entrar' : m === 'perfil' ? 'Guardar y entrar' : 'Crear mi cuenta'}</button>
+              <button class="btn btn-block" type="submit" id="acc-go">${m === 'entrar' ? 'Entrar' : 'Enviar solicitud'}</button>
             </form>
-            <p class="fine">${m === 'perfil' ? '<a href="#/acceso" data-act="acc-out">Usar otra cuenta</a>' : 'Tus datos solo se usan para esta gala.'} · <a href="#/admin">Administración</a></p>
+            <p class="fine">${m === 'perfil' ? '<a href="#/acceso" data-act="acc-out">Usar otra cuenta</a>' : 'El organizador aprobará tu solicitud.'}</p>
           </div>
         </div>
       </section>`,
@@ -365,7 +368,10 @@
             await refresh();
             const dest = afterLogin; afterLogin = null;
             if (dest === 'admin' && S.isAdmin) { toast('Bienvenido a la administración.'); go('admin'); return; }
+            if (dest === 'admin') toast('Esa cuenta no es de administrador.', 'warn');
             if (!S.user) { accessMode = 'perfil'; render(); return; }
+            if (profile) resetReg();
+            if (me().status !== 'approved') { toast('Solicitud enviada. Espera la aprobación del organizador.'); go('pendiente'); return; }
             toast(`Bienvenido, ${first(me().name)}.`);
             go('dashboard');
           } catch (err) {
@@ -489,7 +495,7 @@
     const c = cats[n - 1];
     if (!c) return views.categorias();
     const sel = mySel()[c.id];
-    const people = S.participants.filter((p) => p.active).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    const people = S.participants.filter((p) => p.active && p.status === 'approved').sort((a, b) => a.name.localeCompare(b.name, 'es'));
     return {
       title: `${c.name} · PROM AWARDS 2026`,
       dust: 18,
@@ -652,6 +658,79 @@
     };
   };
 
+  /* ---------- SOLICITUD PENDIENTE / RECHAZADA ---------- */
+  views.pendiente = () => {
+    const u = me(), rej = u.status === 'rejected';
+    return {
+      title: 'Tu solicitud · PROM AWARDS 2026',
+      dust: 30,
+      html: `<section class="access"><div class="access-pane"><div class="access-card rise">
+        ${mark()}
+        <p class="eyebrow">${rej ? 'Solicitud no aprobada' : 'Solicitud enviada'}</p>
+        ${avatar(u, 'av-xl')}
+        <h1 class="h1">${rej ? 'No pudimos aprobar tu acceso.' : `¡Gracias, ${esc(first(u.name))}!`}</h1>
+        <p class="muted">${rej ? 'Si crees que es un error, habla con el organizador.' : 'El organizador revisará tu solicitud. Cuando la apruebe podrás nominar a tus compañeros. Esta pantalla se actualiza sola.'}</p>
+        ${orn()}
+        <div class="actions center">${rej ? '' : '<button class="btn" data-act="pend-check">Comprobar ahora</button>'}${LOGOUT.replace('btn-out', 'btn-ghost')}</div>
+      </div></div></section>`,
+      mount: () => {
+        if (rej) return;
+        const t = setInterval(async () => {
+          try { await refresh(); } catch (e) { return; }
+          if (me() && me().status === 'approved') { toast('¡Tu solicitud fue aprobada!'); go('dashboard'); }
+        }, 15000);
+        cleanup.push(() => clearInterval(t));
+      }
+    };
+  };
+
+  /* ---------- Campana de solicitudes (admin) ---------- */
+  const pendingReqs = () => S.participants.filter((p) => p.status === 'pending');
+  const bellBtn = () => {
+    const n = pendingReqs().length;
+    return `<button class="icon-btn bell" data-act="bell" aria-label="Solicitudes de acceso: ${n} pendientes">${ui('bell')}<b class="badge" id="bell-n" ${n ? '' : 'hidden'}>${n}</b></button>`;
+  };
+  const ago = (iso) => {
+    const m = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+    if (m < 1) return 'justo ahora';
+    if (m < 60) return `hace ${m} min`;
+    const h = Math.round(m / 60);
+    return h < 24 ? `hace ${h} h` : `hace ${Math.round(h / 24)} d`;
+  };
+  const bellModal = () => {
+    const list = pendingReqs();
+    openModal(`
+      <header class="modal-head"><h2 class="h3" id="mt">Solicitudes de acceso</h2><button class="icon-btn" data-act="modal-close" aria-label="Cerrar">${ui('close')}</button></header>
+      <div class="modal-body">
+        ${list.length ? `<ul class="reqs">${list.map((p) => `<li class="req">
+          ${avatar(p, 'av-md')}
+          <span class="req-t"><b>${esc(p.name)}</b><em>${p.alias ? '“' + esc(p.alias) + '” · ' : ''}${ago(p.createdAt)}</em></span>
+          <span class="req-a"><button class="btn btn-sm" data-act="req-ok" data-id="${p.id}">${ui('check')}Aprobar</button><button class="btn btn-sm btn-ghost" data-act="req-no" data-id="${p.id}">Rechazar</button></span>
+        </li>`).join('')}</ul>` : '<p class="empty">No hay solicitudes pendientes.</p>'}
+      </div>
+      <div class="modal-actions">${list.length > 1 ? '<button class="btn btn-ghost" data-act="req-all">Aprobar todas</button>' : '<span></span>'}<button class="btn btn-ghost" data-act="modal-close">Cerrar</button></div>`, 'modal-lg');
+  };
+  const decide = async (id, status) => {
+    try {
+      await DB.setStatus(id, status); await refresh();
+      toast(status === 'approved' ? 'Solicitud aprobada.' : 'Solicitud rechazada.');
+      render({ keep: true }); bellModal();
+    } catch (e) { console.error(e); toast(errMsg(e), 'warn'); }
+  };
+  let seenPending = null;
+  const startBellPoll = () => {
+    seenPending = pendingReqs().length;
+    const t = setInterval(async () => {
+      try {
+        const n = await DB.pendingCount(), el = $('#bell-n');
+        if (el) { el.textContent = n; el.hidden = !n; }
+        if (n > seenPending) toast('Nueva solicitud de acceso.');
+        seenPending = n;
+      } catch (e) { /* reintenta en el siguiente ciclo */ }
+    }, 25000);
+    cleanup.push(() => clearInterval(t));
+  };
+
   /* =====================================================================
      ADMINISTRACIÓN
      ===================================================================== */
@@ -666,7 +745,7 @@
         <a class="side-back" href="#/">${ui('home')}<span>Volver al sitio</span></a>
       </aside>
       <div class="admin-main">
-        <header class="admin-head rise"><div><p class="eyebrow">${sub}</p><h1 class="h1">${title}</h1></div><div class="actions">${actions}${LOGOUT.replace('btn-out', 'btn-ghost')}</div></header>
+        <header class="admin-head rise"><div><p class="eyebrow">${sub}</p><h1 class="h1">${title}</h1></div><div class="actions">${actions}${bellBtn()}${LOGOUT.replace('btn-out', 'btn-ghost')}</div></header>
         ${inner}
       </div>
     </section>`;
@@ -944,8 +1023,15 @@
     cleanup.forEach((f) => f()); cleanup = [];
     let { name, a, b } = parse();
     const needsUser = ['dashboard', 'categorias', 'nominar', 'resumen', 'exito'];
-    if (needsUser.includes(name) && !(S.user && me())) { history.replaceState(null, '', '#/acceso'); name = 'acceso'; }
-    if (name === 'acceso' && S.user && me()) { history.replaceState(null, '', '#/dashboard'); name = 'dashboard'; }
+    const mine = S.user && me();
+    const homeOf = () => (mine && mine.status === 'approved' ? 'dashboard' : 'pendiente');
+    if (name === 'admin' && !S.authed) { accessMode = 'entrar'; afterLogin = 'admin'; history.replaceState(null, '', '#/acceso'); name = 'acceso'; }
+    if (needsUser.includes(name) && !mine) { history.replaceState(null, '', '#/acceso'); name = 'acceso'; }
+    else if (needsUser.includes(name) && mine.status !== 'approved') { history.replaceState(null, '', '#/pendiente'); name = 'pendiente'; }
+    if (name === 'acceso' && mine && afterLogin !== 'admin') { history.replaceState(null, '', '#/' + homeOf()); name = homeOf(); }
+    if (name === 'pendiente' && !mine) { history.replaceState(null, '', '#/acceso'); name = 'acceso'; }
+    else if (name === 'pendiente' && mine.status === 'approved') { history.replaceState(null, '', '#/dashboard'); name = 'dashboard'; }
+    if (name !== 'acceso') afterLogin = null;
     if (name === 'nominar') {
       if (isConfirmed()) { /* solo lectura */ }
       if (!S.settings.open && !isConfirmed()) { toast('Las nominaciones están cerradas.', 'warn'); history.replaceState(null, '', '#/dashboard'); name = 'dashboard'; }
@@ -953,6 +1039,7 @@
     if (name === 'exito' && !isConfirmed()) { history.replaceState(null, '', '#/resumen'); name = 'resumen'; }
     let v;
     if (name === 'admin') v = S.isAdmin ? views.admin(a) : adminDenied();
+    if (name === 'admin' && S.isAdmin) startBellPoll();
     else if (name === 'nominar') v = views.nominar(a);
     else v = (views[name] || views[''])(a);
     const key = name === 'admin' ? 'admin/' + (a || '') : name === 'nominar' ? 'nominar' : name;
@@ -997,11 +1084,23 @@
     scroll: (t, e) => { e.preventDefault(); const el = $(t.dataset.to); if (el) el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' }); },
     'acc-mode': (t) => { accessMode = t.dataset.k; render(); },
     'acc-admin': () => { accessMode = 'entrar'; afterLogin = 'admin'; },
-    'acc-out': async (t, e) => { e.preventDefault(); await DB.signOut(); await refresh(); accessMode = 'registro'; render(); },
+    'acc-out': async (t, e) => { e.preventDefault(); await DB.signOut(); resetReg(); await refresh(); accessMode = 'registro'; render(); },
+    'pend-check': async () => {
+      try { await refresh(); } catch (e) { toast(errMsg(e), 'warn'); return; }
+      if (me() && me().status === 'approved') { toast('¡Tu solicitud fue aprobada!'); go('dashboard'); } else toast('Todavía está pendiente de aprobación.');
+    },
+    bell: async () => { try { await refresh(); } catch (e) { /* se muestra lo último que se tenía */ } bellModal(); },
+    'req-ok': (t) => decide(t.dataset.id, 'approved'),
+    'req-no': (t) => decide(t.dataset.id, 'rejected'),
+    'req-all': async (t) => {
+      t.disabled = true;
+      try { for (const r of pendingReqs()) await DB.setStatus(r.id, 'approved'); await refresh(); toast('Solicitudes aprobadas.'); closeModal(); render({ keep: true }); }
+      catch (e) { console.error(e); toast(errMsg(e), 'warn'); t.disabled = false; }
+    },
     'reg-dice': () => { reg.icon = randIcon(); setRegPhoto(); },
     'reg-nophoto': () => { reg.photo = null; const f = $('#reg-file'); if (f) f.value = ''; setRegPhoto(); },
     logout: async () => {
-      try { await DB.signOut(); await refresh(); toast('Sesión cerrada.'); go(''); }
+      try { await DB.signOut(); resetReg(); afterLogin = null; accessMode = 'registro'; await refresh(); toast('Sesión cerrada.'); go(''); }
       catch (e) { console.error(e); toast(errMsg(e), 'warn'); }
     },
     finish: () => go(''),

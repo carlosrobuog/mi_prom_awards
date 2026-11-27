@@ -605,3 +605,37 @@ body[data-view=nominar] #toast{bottom:132px}
 .access-pane>.back-link{top:22px}
 @media (min-width:760px){.short{display:none}}
 @media (max-width:519px){.bar-l .brand span{display:none}.bar-user{gap:8px}}
+
+/* ---- Campana de solicitudes (admin) ---- */
+.bell{position:relative;border-color:var(--gold-lo)}
+.badge{position:absolute;top:-5px;right:-5px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--red);color:var(--ink);font:700 11px/20px var(--f-ui);text-align:center;box-shadow:0 0 0 2px var(--bg)}
+.badge[hidden]{display:none}
+.reqs{display:grid;gap:10px;list-style:none;padding:0;margin:0}
+.req{display:grid;grid-template-columns:auto 1fr;gap:12px 14px;align-items:center;padding:12px;border:1px solid var(--line-soft);border-radius:var(--r);background:var(--bg3)}
+.req-t{display:grid;gap:2px;min-width:0}
+.req-t b{font:600 15px/1.25 var(--f-serif);overflow-wrap:anywhere}
+.req-t em{font-style:normal;color:var(--mute);font-size:12px}
+.req-a{grid-column:1/-1;display:flex;gap:8px}
+.req-a .btn{flex:1}
+@media (min-width:600px){.req{grid-template-columns:auto 1fr auto}.req-a{grid-column:auto}.req-a .btn{flex:none}}
+
+/* ---- Móvil: sin desbordes horizontales y botones cómodos para el dedo ---- */
+html,body{overflow-x:clip;max-width:100%}
+@media (max-width:759px){
+  .field input,.field textarea,.search input{font-size:16px}   /* iOS hace zoom si es menor */
+  .btn{min-height:48px}
+  .btn-sm{min-height:44px;padding:12px 16px}
+  .icon-btn{width:44px;height:44px}
+  .tab{min-height:44px}
+  .rail-i{min-width:44px;min-height:44px}
+  .bar-nav a{padding:13px 2px}
+}
+
+/* ---- Móvil: refuerzos (sin rebote ni arrastre lateral, objetivos táctiles de 44px) ---- */
+#app{overflow-x:clip}
+html{overscroll-behavior-x:none}
+@media (max-width:759px){
+  .bar-nav a{padding:17px 2px}
+  .bar-l .brand{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center}
+  .link{display:inline-flex;align-items:center;min-height:44px}
+}
